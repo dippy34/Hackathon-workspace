@@ -118,6 +118,22 @@ export const CONFIG = {
     pinchStartM: 0.02,
     /** impl: distance that ends a pinch (hysteresis). */
     pinchEndM: 0.04,
+    /** impl: smoothing time constant (s) for the palm speed. */
+    speedSmoothingSec: 0.15,
+  },
+
+  // ─── Room scan (BUILD_SPEC "Room") ────────────────────────────────────────
+  room: {
+    /** impl: windows/doors closer than this (m) to each other are the same feature. */
+    featureMergeDistM: 0.3,
+    /** impl: the placement aim ray only snaps to detected walls within this distance (m). */
+    placementMaxDistM: 8,
+    /** impl: size (m) given to a manually placed window. */
+    placedWindowWidthM: 1.0,
+    placedWindowHeightM: 1.2,
+    /** impl: size (m) given to a manually placed door. */
+    placedDoorWidthM: 0.9,
+    placedDoorHeightM: 2.0,
   },
 
   // ─── Microphone (DESIGN.md Listener + intro) ──────────────────────────────
