@@ -19,6 +19,17 @@ import type { AttackView, CounteringFn, NightEvents, NightRunnerLike, NightState
  */
 export const MAX_SUBSTEP_SEC = 1 / 30;
 
+/**
+ * Longest frame the night clock accepts. A longer frame (a hitch) is clamped
+ * to this, so night time slows down during the hitch instead of jumping. The
+ * player's input is sampled once per frame, so without the clamp a 1 s hitch
+ * could start an attack and catch the player inside a single update(), with no
+ * rendered frame ever showing the warning. 0.1 s is below every effective
+ * "caught after" in the shipped table (the shortest is the Listener's
+ * 0.3 s / 1.6 = 0.19 s on night 5). Engine robustness constant, not game tuning.
+ */
+export const MAX_FRAME_SEC = 0.1;
+
 type Block = 'max concurrent' | 'teaching alone' | 'closing' | 'fairness' | null;
 
 interface Slot {
@@ -59,6 +70,13 @@ const NEVER_COUNTERING: CounteringFn = () => false;
  *   Several due threats are considered earliest-due first (ties: tuning order),
  *   each start tightening the checks for the next.
  *
+ * Fairness also budgets one more reaction while no active hands-attack is
+ * being countered yet, and a short hand-off right after one leaves (see
+ * `handsBusySec` in scheduler.ts).
+ *
+ * Frames longer than MAX_FRAME_SEC are clamped to it (night time slows during a
+ * hitch), then split into substeps of at most MAX_SUBSTEP_SEC.
+ *
  * Each substep: advance clock -> update active attacks -> any caught? end
  * night (onCaught once) -> retire attacks that left (onAttackLeave, schedule
  * next) -> clock over? survived (remaining attacks dropped silently,
@@ -79,6 +97,10 @@ export class NightRunner implements NightRunnerLike {
   private _state: NightState = 'running';
   private _elapsed = 0;
   private substep = 0;
+  /** Night-clock second the most recent hands-attack left (fairness hand-off budget). */
+  private lastHandsLeaveAt = -Infinity;
+  /** Set by dispose(): the runner is frozen and fires no more events. */
+  private disposed = false;
 
   constructor(tuning: NightTuning, rng: Rng, events: NightEvents = {}) {
     this.tuning = tuning;
@@ -119,16 +141,32 @@ export class NightRunner implements NightRunnerLike {
     if (!s || s.attack || this._state !== 'running' || s.due > this._elapsed + TIME_EPS) return null;
     const block = this.blockOf(s);
     if (block !== 'fairness') return block;
-    const need = handsBusySec(this.active);
+    const need = handsBusySec(this.active, this._elapsed - this.lastHandsLeaveAt);
     const has = effectiveCaughtAfterSec(id, this.tuning.aggression);
     return `fairness: needs ${need.toFixed(1)}s > ${has.toFixed(1)}s`;
   }
 
+  /**
+   * Advances the night by one frame. `dtSec` is clamped to MAX_FRAME_SEC and
+   * split into substeps of at most MAX_SUBSTEP_SEC; `countering` is asked
+   * every substep.
+   */
   update(dtSec: number, countering: CounteringFn = NEVER_COUNTERING): void {
-    if (this._state !== 'running' || !(dtSec > 0) || !Number.isFinite(dtSec)) return;
-    const n = Math.max(1, Math.ceil(dtSec / MAX_SUBSTEP_SEC - 1e-9));
-    const h = dtSec / n;
-    for (let i = 0; i < n && this._state === 'running'; i++) this.step(h, countering);
+    if (this._state !== 'running' || this.disposed || !(dtSec > 0)) return;
+    const dt = Math.min(dtSec, MAX_FRAME_SEC);
+    const n = Math.max(1, Math.ceil(dt / MAX_SUBSTEP_SEC - 1e-9));
+    const h = dt / n;
+    for (let i = 0; i < n && this._state === 'running' && !this.disposed; i++) this.step(h, countering);
+  }
+
+  /**
+   * Abandons the night (GameFlow calls this when it replaces the runner, e.g.
+   * a debug jump from inside an event handler). From then on update() is a
+   * no-op and no further events fire, even for the rest of the update() that
+   * is running right now. `state` keeps its last value.
+   */
+  dispose(): void {
+    this.disposed = true;
   }
 
   private step(h: number, countering: CounteringFn): void {
@@ -150,6 +188,7 @@ export class NightRunner implements NightRunnerLike {
     }
     // (4) retire attacks that left
     this.retireLeft(now);
+    if (this.disposed) return; // an onAttackLeave handler abandoned the night
     // (5) clock ran out
     if (now >= this.tuning.lengthSec - TIME_EPS) {
       this.endSurvived();
@@ -184,12 +223,13 @@ export class NightRunner implements NightRunnerLike {
       const s = this.slotOf(a.id)!;
       s.attack = null;
       s.due = now + sampleGapSec(a.id, this.tuning.aggression, this.rng);
+      if (CONFIG.threats[a.id].usesHands) this.lastHandsLeaveAt = now;
       if (a.teaching) {
         const next = this.teachingQueue[++this.teachingDone];
         if (next) next.due = now + sampleTeachingStartSec(this.rng);
       }
     }
-    for (let i = 0; i < retired.length; i++) this.events.onAttackLeave?.(retired[i]);
+    for (let i = 0; i < retired.length && !this.disposed; i++) this.events.onAttackLeave?.(retired[i]);
     retired.length = 0;
   }
 
@@ -208,7 +248,8 @@ export class NightRunner implements NightRunnerLike {
   private startDue(now: number): void {
     const stamp = ++this.substep;
     const slots = this.slots;
-    for (;;) {
+    // An onAttackStart handler may dispose the runner; stop starting at once.
+    while (!this.disposed) {
       let pick: Slot | null = null;
       for (let i = 0; i < slots.length; i++) {
         const s = slots[i];
@@ -241,7 +282,7 @@ export class NightRunner implements NightRunnerLike {
       return 'teaching alone';
     }
     if (this._elapsed > this.tuning.lengthSec - CONFIG.scheduler.quietClosingSec) return 'closing';
-    if (!passesFairness(s.id, this.tuning.aggression, active)) return 'fairness';
+    if (!passesFairness(s.id, this.tuning.aggression, active, this._elapsed - this.lastHandsLeaveAt)) return 'fairness';
     return null;
   }
 

@@ -202,6 +202,54 @@ export const CONFIG = {
     listenerCutSec: 0.12,
     /** impl: volume of the Listener's faint ringing (kept low so the mic barely hears it). */
     ringingGain: 0.025,
+    /** impl: seconds for the Listener's ringing to swell in. */
+    ringingSwellSec: 2.5,
+    /** impl: limiter threshold (dBFS) on the master output so jumpscares never clip. */
+    limiterThresholdDb: -3,
+    /** impl: time constant (s) with which the Web Audio listener / voices follow their poses. */
+    poseSmoothingSec: 0.012,
+    /** impl: distance roll-off of spatial voices (inverse distance model). */
+    voiceRolloff: 1.2,
+    /** impl: default reference distance (m) of spatial voices (full volume inside it). */
+    voiceRefDistanceM: 0.6,
+    /** impl: how far ahead (s) the sound scheduler books events, and its timer period (ms). */
+    schedulerLookaheadSec: 0.12,
+    schedulerIntervalMs: 25,
+    /** impl: CPU guard: above this many live transient sounds, loops skip optional events. */
+    maxLiveEvents: 48,
+    /** impl: heartbeat rate (bpm) at intensity 0 and 1 (intensity = highest danger meter). */
+    heartbeatBpmMin: 55,
+    heartbeatBpmMax: 120,
+    /** impl: random gap (s) between distant house creaks/ticks in the night ambience. */
+    ambienceEventMinSec: 6,
+    ambienceEventMaxSec: 15,
+    /** impl: loudness of each procedural loop before spatialisation (balance the mix here). */
+    loopLevels: {
+      ambience: 0.6,
+      scratching: 0.55,
+      glassTaps: 1.0,
+      doorKnocks: 1.0,
+      doorCreak: 0.8,
+      heartbeat: 0.45,
+    },
+    /** impl: loudness of each one-shot (multiplied by the caller's gain). */
+    oneShotLevels: {
+      lightsOut: 0.8,
+      dawn: 0.6,
+      calibrated: 0.6,
+      placed: 0.6,
+      flashOn: 0.5,
+      flashOff: 0.45,
+      flashEmpty: 0.5,
+      deskRetreat: 0.8,
+      glassRetreat: 0.9,
+      doorRetreat: 0.9,
+      listenerLeave: 0.6,
+      grab: 1.0,
+      scream: 1.0,
+      faceRush: 1.0,
+      doorBurst: 1.0,
+    },
   },
 
   debug: {

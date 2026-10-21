@@ -48,33 +48,72 @@ export function effectiveCaughtAfterSec(id: ThreatId, aggression: number): numbe
 }
 
 /**
- * How long the player's hands stay busy with what is already attacking:
- * the sum over active hands-attacks of (remainingLeaveSec + reactionSec).
- * 0 when no hands-attack is active. The Listener (usesHands false) never counts.
+ * How long the player's hands stay busy with what is already happening, in
+ * seconds: the budget a new hands-threat's effective "caught after" must beat
+ * (DESIGN.md "Fairness rules"). Worst case, the player works through the
+ * hands-attacks one at a time and then has to get to the new one.
+ *
+ * - Each active hands-attack h adds `h.remainingLeaveSec + reactionSec`
+ *   (finish it, then react / move a hand to the next one). With one active
+ *   hands-attack that is exactly DESIGN.md's "what's left of the first one's
+ *   'leaves after' time, plus 1.5 s to react"; for 2+ (night 5) the sum is the
+ *   conservative generalisation.
+ * - Engage: if hands-attacks are active but NONE of them is being countered
+ *   right now (`countering` false: it just started, possibly earlier in this
+ *   same substep, or the player is still getting a hand to it), one more
+ *   `reactionSec` is added. "Leaves after" only counts down once the player is
+ *   actually countering, and getting there is a reaction DESIGN.md budgets
+ *   1.5 s for, so without this a fresh, untouched Under the Desk would let an
+ *   8 s Peeker start that a within-budget player can't reach in time.
+ * - Hand-off: with no hands-attack active, a hands-attack that left
+ *   `sinceHandsLeaveSec` ago may still have a hand on its way back, so the
+ *   budget is `max(0, reactionSec - sinceHandsLeaveSec)`. This keeps the rule
+ *   continuous across a leave: one substep before it, the leaving attack
+ *   counted 0 + reactionSec. (While any hands-attack is active its own term is
+ *   at least reactionSec, which already covers the returning hand.)
+ *
+ * The Listener (usesHands false) never counts. Both extra terms only make the
+ * rule stricter than DESIGN.md's wording, never looser.
+ *
+ * @param sinceHandsLeaveSec seconds since the most recent hands-attack left
+ *   tonight (Infinity if none has).
  */
-export function handsBusySec(active: readonly AttackView[]): number {
+export function handsBusySec(active: readonly AttackView[], sinceHandsLeaveSec = Infinity): number {
+  const reaction = CONFIG.scheduler.reactionSec;
   let sum = 0;
+  let hands = 0;
+  let engaged = false;
   for (let i = 0; i < active.length; i++) {
     const a = active[i];
     if (a.state === 'active' && CONFIG.threats[a.id].usesHands) {
-      sum += a.remainingLeaveSec + CONFIG.scheduler.reactionSec;
+      hands++;
+      if (a.countering) engaged = true;
+      sum += a.remainingLeaveSec + reaction;
     }
   }
-  return sum;
+  if (hands > 0 && !engaged) sum += reaction;
+  return Math.max(sum, reaction - sinceHandsLeaveSec);
 }
 
 /**
- * DESIGN.md "The rule": never start an attack that can't be survived. A
- * hands-threat may start while other hands-threats attack only if its
- * effective "caught after" is longer than `handsBusySec(active)`.
+ * DESIGN.md "The rule": never start an attack that can't be survived given
+ * what's already happening. A hands-threat may start only if its effective
+ * "caught after" (caughtAfterSec / aggression, since aggression makes the meter
+ * fill faster) is longer than `handsBusySec(active, sinceHandsLeaveSec)`.
  *
- * With one active hands-attack this is exactly DESIGN.md's wording ("caught
- * after" > what's left of the first one's "leaves after" + 1.5 s). For 2+
- * active hands-attacks (night 5) it is generalised conservatively by summing:
- * the player may have to finish each one in turn before their hand is free.
+ * With one active, countered hands-attack this is exactly DESIGN.md's wording
+ * ("caught after" > what's left of the first one's "leaves after" + 1.5 s).
+ * It is generalised (see handsBusySec) by summing over 2+ active hands-attacks
+ * (night 5), by budgeting one more reaction while none of them is being
+ * countered yet, and by a short hand-off budget right after one leaves.
  * Threats that don't use hands (the Listener) always pass.
  */
-export function passesFairness(id: ThreatId, aggression: number, active: readonly AttackView[]): boolean {
+export function passesFairness(
+  id: ThreatId,
+  aggression: number,
+  active: readonly AttackView[],
+  sinceHandsLeaveSec = Infinity,
+): boolean {
   if (!CONFIG.threats[id].usesHands) return true;
-  return effectiveCaughtAfterSec(id, aggression) > handsBusySec(active);
+  return effectiveCaughtAfterSec(id, aggression) > handsBusySec(active, sinceHandsLeaveSec);
 }
