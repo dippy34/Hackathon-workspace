@@ -101,7 +101,7 @@ export class ListenerThreat implements ThreatPresenter {
   }
 
   tick(ctx: FrameContext): void {
-    const dt = Math.min(ctx.dt, 0.1);
+    const dt = Math.min(ctx.dt, CONFIG.maxFrameSec);
     // Real (frame) time, not game time: the fade-out it covers runs on the audio clock.
     if (this.onsetLeft > 0) this.onsetLeft -= dt;
     if (this.leaveLingerLeft > 0 && (this.leaveLingerLeft -= dt) <= 0) this.releaseLeaveSound(0.25);
@@ -116,6 +116,9 @@ export class ListenerThreat implements ThreatPresenter {
   hintAnchor(ctx: FrameContext, out: Vector3): Vector3 {
     return pointInFrontOfHead(ctx.headPos, ctx.headForward, 0.6, 0, out);
   }
+
+  /** The Listener is never seen; nothing to hide. */
+  hideVisuals(): void {}
 
   reset(): void {
     this.audio?.setGameCut(false);

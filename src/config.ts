@@ -110,6 +110,8 @@ export const CONFIG = {
     pauseSec: 1.8,
     /** impl: seconds of caught moment before the screen cuts to black (inside pauseSec). */
     cutToBlackSec: 0.9,
+    /** impl: how fast the cut to black (and the "Night N / Again." card) happens. */
+    blackFadeSec: 0.08,
   },
 
   // ─── Hands (DESIGN.md Under the Desk, Knocker, Peeker) ─────────────────────
@@ -126,8 +128,17 @@ export const CONFIG = {
     pinchStartM: 0.02,
     /** impl: distance that ends a pinch (hysteresis). */
     pinchEndM: 0.04,
-    /** impl: smoothing time constant (s) for the palm speed. */
-    speedSmoothingSec: 0.15,
+    /**
+     * impl: palm speed = distance from the palm to its moving average (time constant
+     * this many s) divided by this, so it reads the true speed of a steady movement but
+     * stays near 0 for a still hand's millimetre tracking jitter, at any frame rate.
+     */
+    speedWindowSec: 0.25,
+    /**
+     * impl: an untracked hand keeps its last state, but its pinch lets go after this many
+     * seconds of continuous tracking loss (so the flashlight can't stay on, draining, forever).
+     */
+    pinchLostGraceSec: 2.0,
   },
 
   // ─── Room scan (BUILD_SPEC "Room") ────────────────────────────────────────
@@ -142,6 +153,11 @@ export const CONFIG = {
     /** impl: size (m) given to a manually placed door. */
     placedDoorWidthM: 0.9,
     placedDoorHeightM: 2.0,
+    /**
+     * impl: a detected "window" at least this tall (m) is ignored. Quest labels Space Setup's
+     * invisible walls (open-plan room boundaries) 'window', and those are full wall height.
+     */
+    maxWindowHeightM: 2.3,
   },
 
   // ─── Microphone (DESIGN.md Listener + intro) ──────────────────────────────
@@ -184,6 +200,14 @@ export const CONFIG = {
     stillMaxSpeedMps: 0.12,
     /** impl: how long (s) the room scan may take before falling back to point-and-pinch placement. */
     roomScanTimeoutSec: 4,
+    /** impl: pause after "Good." before the next intro prompt. */
+    calibratedBeatSec: 1.4,
+    /** impl: calibration forgives a hand dropping out of tracking for this long. */
+    holdGraceSec: 0.35,
+    /** impl: a placement pinch counts only after the prompt has been up this long. */
+    placementSettleSec: 0.6,
+    /** impl: calibrating palms must be at least this far below the head (m). */
+    minPalmBelowHeadM: 0.2,
     /** impl: placement ray length (m) when it hits no detected wall. */
     placementFallbackDistM: 2.5,
   },
@@ -239,6 +263,10 @@ export const CONFIG = {
     nightClearedSec: 6,
     /** impl: how long a teaching hint stays scrawled near a threat's first attack. */
     teachingHintSec: 5,
+    /** impl: the room fades back to normal when the intro starts. */
+    introFadeSec: 0.5,
+    /** impl: "Night N" / "survived" cards hide this long before their phase ends. */
+    cardEarlyHideSec: 0.6,
   },
 
   audio: {
@@ -411,8 +439,15 @@ export const CONFIG = {
     overlayHeadDistM: 0.85,
     overlayHeadLeftDeg: 38,
     overlayHeadDownDeg: 12,
-    /** impl: mic/baseline ratio while game audio plays at or above which the overlay says "mic hears game: YES". */
-    micLeakRatio: 2,
+    /**
+     * impl: the overlay says "mic hears game: YES" when the average mic/room ratio
+     * while game audio plays is at least this multiple of the ratio while it's cut.
+     */
+    micLeakRatio: 1.5,
+    /** impl: averaging time (s) for that check. */
+    micLeakAverageSec: 4,
+    /** impl: game output level (RMS) above which game audio counts as "playing" for that check. */
+    micLeakGameLevel: 0.005,
   },
 } as const;
 

@@ -164,6 +164,9 @@ These are the places where the rules above needed an interpretation to be coded.
 - **Caught.** The caught moment plays for about 0.9 s, then the screen cuts to black and shows "Night N. Again." The night clock restarts 3 s after the catch (1.8 s caught + black, then a 1.2 s lead-in).
 - **No mic.** The Listener is removed from the schedule. Night 3 still runs with Under the Desk and the Peeker.
 - **Every warning has a sound and a visual,** so a threat that starts during the Listener's silence can still be seen.
+- **Leaving XR** (taking the headset off, or exiting through the Quest menu) pauses the game. Coming back replays the current night from its start, or starts the next one if you'd just survived. The headset menu (blur) only pauses. If the microphone was allowed after the intro, the intro's hands-flat, stay-quiet step runs again first so the Listener has a room level.
+- **Tracking loss.** A hand that loses tracking keeps its last state (flat, palm, pinch) as BUILD_SPEC asks. The one exception: a pinch lets go after 2 s without tracking, so a hand that leaves view mid-pinch can't leave the flashlight burning forever.
+- **Open-plan rooms.** Quest reports Space Setup's invisible walls with the label "window". A "window" at least 2.3 m tall is treated as an invisible wall and ignored. It still shows in the debug overlay's label list.
 
 ### Implementation tuning (starting values; change in `src/config.ts`)
 
@@ -190,3 +193,9 @@ These are the places where the rules above needed an interpretation to be coded.
 | `meterDrainMultiplier` | 1.0 | Meter drains as fast as it fills (at 1.0×) |
 | `scheduler.teachingStartEarliestSec` | 4 s | Earliest a teaching attack starts (darkness settles first) |
 | `maxFrameSec` | 0.1 s | A frame hitch slows game time instead of skipping ahead |
+| `intro.holdGraceSec` | 0.35 s | Calibration forgives a hand flickering out of tracking this long |
+| `intro.calibratedBeatSec` | 1.4 s | Pause on "Good." before the next intro step |
+| `hands.pinchLostGraceSec` | 2 s | A pinch held by a hand that lost tracking lets go after this |
+| `hands.speedWindowSec` | 0.25 s | Palm stillness is measured over this window (ignores tracking jitter) |
+| `intro.stillMaxSpeedMps` | 0.12 m/s | Palms count as "still" for calibration |
+| `room.maxWindowHeightM` | 2.3 m | Taller "windows" are invisible walls (open-plan rooms) |

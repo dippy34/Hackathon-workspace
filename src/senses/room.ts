@@ -7,6 +7,10 @@
  * - Turns window / door planes (and meshes) into stable RoomFeature objects
  *   that follow the headset's refinements.
  * - Point-and-pinch placement fallback: ray-cast against detected walls.
+ * - Open-plan rooms: Quest labels Space Setup's invisible walls 'window'. A
+ *   "window" at least CONFIG.room.maxWindowHeightM tall is one of those, so it
+ *   never becomes a feature (logged once per plane, and counted in the report
+ *   under '<label> (wall-sized, ignored)' instead of its label).
  *
  * Plane space: Y is the plane normal and the polygon lies in its XZ plane.
  */
@@ -32,6 +36,8 @@ import { CONFIG } from '../config.js';
 import type { FeatureKind, RoomFeature, RoomScanReport, RoomScannerLike } from '../game/contracts.js';
 
 const NO_LABEL = '(none)';
+/** Report key suffix for a wall-sized 'window' (an invisible wall), e.g. 'window (wall-sized, ignored)'. */
+const WALL_SIZED_SUFFIX = ' (wall-sized, ignored)';
 const UP = new Vector3(0, 1, 0);
 /** Debug marker colours: cold cyan windows, amber doors. */
 const MARKER_COLOR: Record<FeatureKind, number> = { window: 0x7fdcff, door: 0xffa845 };
@@ -93,6 +99,11 @@ class Detection {
   vertical = false;
   logged = false;
   feature: Feature | null = null;
+  /** A 'window' at least CONFIG.room.maxWindowHeightM tall (an invisible wall): never drives a feature. */
+  wallSized = false;
+  wallLogged = false;
+  /** Key this detection is counted under in the report's label list. */
+  countKey = NO_LABEL;
 
   constructor(
     readonly source: 'plane' | 'mesh',
@@ -159,6 +170,8 @@ export class RoomScanner implements RoomScannerLike {
   private readonly localDir = new Vector3();
   private bestT = 0;
   private bestHit: Detection | null = null;
+  /** Feature being removed (unlinkOrphan clears every detection's reference to it). */
+  private orphan: Feature | null = null;
   /** The last placementPoint() wall hit, so place() can use that wall's real normal. */
   private lastHitValid = false;
   private readonly lastHitPos = new Vector3();
@@ -292,15 +305,20 @@ export class RoomScanner implements RoomScannerLike {
     }
     d.seenFrame = this.frameNo;
     this.readLabel(d, plane.semanticLabel);
-    countLabel(this.report.planeLabels, this.planeLabelKeys, d.label);
     if (d.changedTime !== plane.lastChangedTime) {
       d.changedTime = plane.lastChangedTime;
       polygonBounds(plane.polygon, d);
     }
+    this.trackPlane(d, plane.orientation as string | null | undefined);
+    // Counted after tracking, which may have found a wall-sized 'window'.
+    countLabel(this.report.planeLabels, this.planeLabelKeys, d.countKey);
+  };
 
-    // Vertical planes (walls, windows, doors) are re-posed every frame for
-    // features and placement; horizontal ones only until they've been logged.
-    const orientation = plane.orientation as string | null | undefined;
+  /**
+   * Vertical planes (walls, windows, doors) are re-posed every frame for
+   * features and placement; horizontal ones only until they've been logged.
+   */
+  private trackPlane(d: Detection, orientation: string | null | undefined): void {
     if (orientation === 'horizontal') d.vertical = false;
     if (orientation === 'horizontal' && d.logged) return;
     this.refreshPose(d);
@@ -310,7 +328,7 @@ export class RoomScanner implements RoomScannerLike {
     }
     if (!d.logged) this.logDetection(d, orientation ?? (d.vertical ? 'vertical?' : 'horizontal?'));
     if (d.kind && d.vertical) this.driveFeature(d);
-  };
+  }
 
   private readonly visitMesh = (mesh: XRMesh): void => {
     let d = this.meshes.get(mesh);
@@ -320,17 +338,22 @@ export class RoomScanner implements RoomScannerLike {
     }
     d.seenFrame = this.frameNo;
     this.readLabel(d, mesh.semanticLabel);
-    countLabel(this.report.meshLabels, this.meshLabelKeys, d.label);
     if (d.changedTime !== mesh.lastChangedTime) {
       d.changedTime = mesh.lastChangedTime;
       vertexBounds(mesh.vertices, d);
     }
+    this.trackMesh(d);
+    // Counted after tracking, which may have found a wall-sized 'window'.
+    countLabel(this.report.meshLabels, this.meshLabelKeys, d.countKey);
+  };
+
+  private trackMesh(d: Detection): void {
     if (d.logged && !d.kind) return;
     this.refreshPose(d);
     if (!d.poseValid) return;
     if (!d.logged) this.logDetection(d, null);
     if (d.kind) this.driveFeature(d);
-  };
+  }
 
   private readonly sweepPlane = (d: Detection, plane: XRPlane): void => {
     if (d.seenFrame === this.frameNo) return;
@@ -342,6 +365,10 @@ export class RoomScanner implements RoomScannerLike {
     if (d.seenFrame === this.frameNo) return;
     this.releaseFeature(d);
     this.meshes.delete(mesh);
+  };
+
+  private readonly unlinkOrphan = (d: Detection): void => {
+    if (d.feature === this.orphan) d.feature = null;
   };
 
   private readonly rayTest = (d: Detection): void => {
@@ -366,6 +393,8 @@ export class RoomScanner implements RoomScannerLike {
     d.labelRead = true;
     d.rawLabel = raw;
     d.label = normalizeLabel(raw);
+    d.wallSized = false; // re-judged by driveFeature under the new label
+    d.countKey = d.label;
     const kind = openingKind(d.label);
     if (kind !== d.kind) {
       this.releaseFeature(d);
@@ -413,6 +442,11 @@ export class RoomScanner implements RoomScannerLike {
 
   private driveFeature(d: Detection): void {
     this.measure(d);
+    if (d.kind === 'window' && this.measuredHeight >= CONFIG.room.maxWindowHeightM) {
+      this.rejectWallSized(d);
+      return;
+    }
+    this.setWallSized(d, false);
     if (!d.feature) d.feature = this.claim(d);
     const f = d.feature;
     if (!f.owner && f.source !== 'placed') {
@@ -425,6 +459,51 @@ export class RoomScanner implements RoomScannerLike {
     f.normal.copy(this.nrm);
     f.width = this.measuredWidth;
     f.height = this.measuredHeight;
+  }
+
+  /**
+   * Quest maps Space Setup's invisible walls (open-plan room boundaries) to the
+   * label 'window'. One that's wall-sized is one of those: it drives no feature,
+   * and any feature it was driving goes away (so the intro's placement fallback
+   * runs if no real window is left). Uses the measure() just done.
+   */
+  private rejectWallSized(d: Detection): void {
+    this.setWallSized(d, true);
+    if (d.feature) this.discardFeatureOf(d);
+    if (d.wallLogged) return;
+    d.wallLogged = true;
+    console.log(
+      `[room] ${d.label} label but wall-sized (${this.measuredWidth.toFixed(2)} x ${this.measuredHeight.toFixed(2)} m): ` +
+        `treating as invisible wall, ignored [${d.source} at ${fmt(this.pos)}]`,
+    );
+  }
+
+  private setWallSized(d: Detection, wallSized: boolean): void {
+    if (d.wallSized === wallSized) return;
+    d.wallSized = wallSized;
+    d.countKey = wallSized ? d.label + WALL_SIZED_SUFFIX : d.label;
+  }
+
+  /**
+   * Unlink a detection that turned out not to be an opening from its feature. A
+   * feature it was driving is removed outright (released features normally keep
+   * their last pose), along with every other detection's link to it.
+   */
+  private discardFeatureOf(d: Detection): void {
+    const f = d.feature!;
+    d.feature = null;
+    if (f.owner !== d) return; // placed, or driven by another detection: not ours to remove
+    const list = this.listFor(f.kind);
+    const i = list.indexOf(f);
+    if (i >= 0) list.splice(i, 1);
+    if (f.marker) disposeMarker(f.marker);
+    f.marker = null;
+    f.owner = null;
+    this.orphan = f;
+    this.planes.forEach(this.unlinkOrphan);
+    this.meshes.forEach(this.unlinkOrphan);
+    this.orphan = null;
+    console.log(`[room] - ${f.kind} at ${fmt(f.position)}: its ${d.source} is now wall-sized; ${list.length} ${f.kind}s left`);
   }
 
   /** Existing feature within the merge distance (de-dupe), else a new one. */

@@ -3,8 +3,16 @@
  * aim ray, flat-on-the-desk and palm-facing tests.
  *
  * Tracking loss (BUILD_SPEC "Hands"): a hand that is not tracked this frame
- * keeps every last value (palm, flat, pinching, ...) and only `tracked` goes
- * false, so a hand that drops out while pressed on the desk still counts.
+ * keeps every last value (palm, flat, speed, ...) and only `tracked` goes
+ * false, so a hand that drops out while pressed on the desk still counts. The
+ * one exception is `pinching`: it lets go after CONFIG.hands.pinchLostGraceSec
+ * of continuous loss, so a hand that leaves view mid-pinch can't leave the
+ * flashlight burning (and draining) forever. Shorter drops keep the pinch.
+ *
+ * Speed is displacement-based: |palm - EMA(palm)| / speedWindowSec. For a
+ * steady movement the average lags by about speed * window, so this reads the
+ * true speed; a still hand's per-frame jitter averages out instead of being
+ * divided by a tiny dt, so it reads near zero at 72, 90 or 120 Hz alike.
  */
 
 import { Matrix4, Vector3, type World } from '@iwsdk/core';
@@ -28,9 +36,11 @@ class Hand implements HandState {
   palmDownAngleDeg = 180;
   heightAboveDesk = NaN;
   flat = false;
-  /** Palm position on the previous tracked frame (for speed); invalid after a tracking gap. */
-  readonly prevPalm = new Vector3();
-  prevValid = false;
+  /** Exponential moving average of the palm (for speed); restarted after a tracking gap. */
+  readonly palmAvg = new Vector3();
+  avgValid = false;
+  /** Seconds of continuous tracking loss (0 while tracked). */
+  untrackedSec = 0;
 
   constructor(readonly side: Side) {}
 
@@ -87,9 +97,8 @@ export class HandTracker implements HandTrackerLike {
         source.handedness === 'left' ? this.left : source.handedness === 'right' ? this.right : null;
       if (hand && !hand.tracked) this.sample(hand, source, source.hand, frame, refSpace, dt);
     }
-    // Don't turn a tracking gap into a speed spike.
-    if (!this.left.tracked) this.left.prevValid = false;
-    if (!this.right.tracked) this.right.prevValid = false;
+    this.trackingLoss(this.left, dt);
+    this.trackingLoss(this.right, dt);
   }
 
   palmFacing(target: Vector3): Side | null {
@@ -98,6 +107,15 @@ export class HandTracker implements HandTrackerLike {
     const r = this.facingDot(this.right, target);
     if (l < minDot && r < minDot) return null;
     return l >= r ? 'left' : 'right';
+  }
+
+  /** An untracked hand keeps its last state, except that a pinch lets go after a grace period. */
+  private trackingLoss(hand: Hand, dt: number): void {
+    if (hand.tracked) return;
+    hand.avgValid = false; // re-acquire restarts the speed average: no spike from the jump
+    if (!hand.seen) return;
+    hand.untrackedSec += dt;
+    if (hand.pinching && hand.untrackedSec >= CONFIG.hands.pinchLostGraceSec) hand.pinching = false;
   }
 
   /** cos(angle) between a hand's palm normal and the palm->target direction; -Infinity if it can't count. */
@@ -134,6 +152,7 @@ export class HandTracker implements HandTrackerLike {
 
     hand.tracked = true;
     hand.seen = true;
+    hand.untrackedSec = 0;
 
     // Palm: middle-finger metacarpal. Joint -Y points out of the palm, -Z along the bone.
     const m = this.jointMat.fromArray(palm.transform.matrix).premultiply(this.playerMat).elements;
@@ -141,13 +160,16 @@ export class HandTracker implements HandTrackerLike {
     hand.palmNormal.set(-m[4], -m[5], -m[6]).normalize();
     hand.palmDownAngleDeg = Math.acos(Math.min(1, Math.max(-1, -hand.palmNormal.y))) * RAD2DEG;
 
-    // Speed (smoothed), skipping the first frame after a tracking gap.
-    if (hand.prevValid && dt > 0) {
-      const v = hand.palm.distanceTo(hand.prevPalm) / dt;
-      hand.speed += (v - hand.speed) * (1 - Math.exp(-dt / CONFIG.hands.speedSmoothingSec));
+    // Speed: how far the palm is from its recent average (see the header). The
+    // first frame after a tracking gap restarts the average at the palm.
+    const windowSec = CONFIG.hands.speedWindowSec;
+    if (!hand.avgValid) {
+      hand.palmAvg.copy(hand.palm);
+      hand.avgValid = true;
+    } else if (dt > 0) {
+      hand.palmAvg.lerp(hand.palm, 1 - Math.exp(-dt / windowSec));
     }
-    hand.prevPalm.copy(hand.palm);
-    hand.prevValid = true;
+    hand.speed = hand.palm.distanceTo(hand.palmAvg) / windowSec;
 
     // Pinch with hysteresis.
     const t = thumb.transform.position;

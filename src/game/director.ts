@@ -1,5 +1,5 @@
 import { createSystem, Quaternion, Vector3, VisibilityState, type World } from '@iwsdk/core';
-import { CONFIG, THREAT_IDS, nightTuning, type ThreatId } from '../config.js';
+import { CONFIG, NIGHT_COUNT, THREAT_IDS, nightTuning, type ThreatId } from '../config.js';
 import { GameFlow } from '../core/game-flow.js';
 import type { AttackView, Phase } from '../core/types.js';
 import { AudioEngine } from '../audio/engine.js';
@@ -46,6 +46,9 @@ export class Director {
   private fps = 72;
   private sessionInfo = '';
   private paused = false;
+  private cutToBlackDone = false;
+  /** Night to resume once a late room-level calibration finishes (mic granted after the intro). */
+  private pendingResume: number | null = null;
   private readonly headPos = new Vector3();
   private readonly headForward = new Vector3();
   private readonly headQuat = new Quaternion();
@@ -104,7 +107,7 @@ export class Director {
         this.hands.setDesk(desk);
         this.note(`desk calibrated at ${desk.height.toFixed(2)} m`);
       },
-      () => this.flow.completeIntro(),
+      () => this.onIntroDone(),
     );
 
     this.flow = new GameFlow({
@@ -139,9 +142,15 @@ export class Director {
 
   /** Called by the title page / session end handler to know where we are. */
   get resumeText(): string | null {
-    const n = this.flow.night;
     if (this.flow.phase === 'ending') return 'You held still. Enter to play again.';
+    const n = this.resumeNight();
     return n > 0 ? `Resume: Night ${n}` : null;
+  }
+
+  /** The night a re-entry continues from (a survived night moves on to the next one). */
+  private resumeNight(): number {
+    const n = this.flow.night;
+    return this.flow.phase === 'nightCleared' ? Math.min(n + 1, NIGHT_COUNT) : n;
   }
 
   /** Session-end hook for the title page. */
@@ -175,8 +184,10 @@ export class Director {
     }
 
     if (!this.paused) {
-      if (this.flow.phase === 'intro') this.intro.update(ctx);
-      this.flow.update(dt, this.countering);
+      if (this.flow.phase === 'intro' || this.pendingResume !== null) this.intro.update(ctx);
+      // While re-calibrating before a resume, the flow waits.
+      if (this.pendingResume === null) this.flow.update(dt, this.countering);
+      this.updateCutToBlack();
       const runner = this.flow.runner;
       if (this.flow.phase === 'night' && runner) {
         let maxMeter = 0;
@@ -217,19 +228,38 @@ export class Director {
     const phase = this.flow.phase;
     if (phase === 'title') {
       this.flow.begin();
-    } else if (phase === 'intro') {
+      return;
+    }
+    if (phase === 'intro') {
       this.intro.start(this.ctx);
-    } else if (phase === 'ending') {
-      // Play again from night 1 (calibration is kept).
-      this.flow.debugJumpToNight(1);
+      return;
+    }
+    // Play again from night 1 after the ending; otherwise replay the current night
+    // from its start (or move on to the next one after surviving).
+    const night = phase === 'ending' ? 1 : Math.max(1, this.resumeNight());
+    if (this.mic.status === 'granted' && this.mic.baseline === null) {
+      // The mic was allowed after the intro: measure the room level first, or the Listener stays off.
+      this.pendingResume = night;
+      this.intro.start(this.ctx);
+      this.note('re-calibrating (mic allowed after the intro)');
     } else {
-      // Resume: replay the current night from its start.
-      this.flow.debugJumpToNight(Math.max(1, this.flow.night));
+      this.flow.debugJumpToNight(night);
+    }
+  }
+
+  private onIntroDone(): void {
+    if (this.pendingResume !== null) {
+      const night = this.pendingResume;
+      this.pendingResume = null;
+      this.flow.debugJumpToNight(night);
+    } else {
+      this.flow.completeIntro();
     }
   }
 
   private onSessionEnd(): void {
     this.resetPresentation();
+    if (this.pendingResume !== null) this.intro.abort();
     // Our AudioEngine keeps running on the 2D title page: silence the night (nightIntro recreates both on resume).
     this.ambience?.stop(0.3);
     this.ambience = null;
@@ -248,12 +278,14 @@ export class Director {
     this.note(`${prev} → ${phase}${night ? ` (night ${night})` : ''}`);
     switch (phase) {
       case 'intro':
-        this.darkness.fadeTo(0, 0.5);
+        this.darkness.fadeTo(0, CONFIG.flow.introFadeSec);
         this.intro.start(this.ctx);
         break;
 
       case 'nightIntro': {
-        const restart = prev === 'caught';
+        // A real catch-restart (a resume after leaving XR mid-catch starts the night fresh).
+        const restart = prev === 'caught' && this.flow.restarts > 0;
+        this.cutToBlackDone = false;
         this.resetPresentation();
         this.flashlight.refill();
         this.flashlight.setAllowed(false);
@@ -262,7 +294,7 @@ export class Director {
         if (!restart) this.audio.sounds.oneShot('lightsOut', this.audio.gameBus);
         // (After a catch, "Night N / Again." is already showing from the cut to black.)
         if (!restart) {
-          this.text.show(`Night ${night}`, { mode: 'gaze', size: 0.09, durationSec: CONFIG.flow.nightIntroSec - 0.5 });
+          this.text.show(`Night ${night}`, { mode: 'gaze', size: 0.09, durationSec: CONFIG.flow.nightIntroSec - CONFIG.flow.cardEarlyHideSec });
         }
         this.ambience ??= this.audio.sounds.ambience(this.audio.gameBus);
         this.heartbeat ??= this.audio.sounds.heartbeat(this.audio.gameBus);
@@ -284,7 +316,10 @@ export class Director {
         this.flashlight.setAllowed(false);
         this.darkness.fadeTo(0, CONFIG.darkness.fadeOutSec);
         this.audio.sounds.oneShot('dawn', this.audio.gameBus);
-        this.text.show(`Night ${night} survived.`, { mode: 'gaze', durationSec: CONFIG.flow.nightClearedSec - 1 });
+        this.text.show(`Night ${night} survived.`, {
+          mode: 'gaze',
+          durationSec: CONFIG.flow.nightClearedSec - CONFIG.flow.cardEarlyHideSec,
+        });
         break;
 
       case 'ending':
@@ -292,7 +327,7 @@ export class Director {
         this.flashlight.setAllowed(false);
         this.ambience?.stop(CONFIG.darkness.fadeOutSec);
         this.ambience = null;
-        this.heartbeat?.stop(1);
+        this.heartbeat?.stop(CONFIG.darkness.fadeOutSec);
         this.heartbeat = null;
         this.darkness.fadeTo(0, CONFIG.darkness.fadeOutSec);
         this.audio.sounds.oneShot('dawn', this.audio.gameBus);
@@ -319,16 +354,26 @@ export class Director {
     this.hint.hide();
     this.flashlight.setAllowed(false);
     this.threats[a.id].caught(this.ctx);
-    // The caught moment plays, then the screen cuts to black until the restart.
-    const night = this.flow.night;
-    window.setTimeout(() => {
-      if (this.flow.phase === 'caught' && this.flow.night === night) {
-        this.darkness.fadeTo(1, 0.06);
-        this.threats[a.id].reset();
-        const untilClock = CONFIG.caught.pauseSec - CONFIG.caught.cutToBlackSec + CONFIG.flow.restartIntroSec;
-        this.text.show(`Night ${night}`, { mode: 'gaze', size: 0.09, subtitle: 'Again.', fadeInSec: 0.15, durationSec: untilClock - 0.2 });
-      }
-    }, CONFIG.caught.cutToBlackSec * 1000);
+    // The caught moment plays; frame() cuts to black at caught.cutToBlackSec.
+    this.cutToBlackDone = false;
+  }
+
+  /** Caught moment over: cut to black (on the game clock, so a headset-menu pause holds it). */
+  private updateCutToBlack(): void {
+    if (this.flow.phase !== 'caught' || this.cutToBlackDone) return;
+    if (this.flow.phaseTimeSec < CONFIG.caught.cutToBlackSec) return;
+    this.cutToBlackDone = true;
+    this.darkness.fadeTo(1, CONFIG.caught.blackFadeSec);
+    // Hide the monster but let its caught sound finish; nightIntro's reset stops the rest.
+    for (const id of THREAT_IDS) this.threats[id].hideVisuals();
+    const untilClock = CONFIG.caught.pauseSec - CONFIG.caught.cutToBlackSec + CONFIG.flow.restartIntroSec;
+    this.text.show(`Night ${this.flow.night}`, {
+      mode: 'gaze',
+      size: 0.09,
+      subtitle: 'Again.',
+      fadeInSec: CONFIG.caught.blackFadeSec,
+      durationSec: untilClock - CONFIG.caught.blackFadeSec,
+    });
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────
@@ -345,20 +390,27 @@ export class Director {
   private resetPresentation(): void {
     for (const id of THREAT_IDS) this.threats[id].reset();
     this.audio.setGameCut(false);
+    this.heartbeat?.setIntensity(0);
     this.hint.hide();
   }
 
+  /**
+   * Does the mic hear the game? Slow averages of mic level / room level while
+   * game audio plays vs while the Listener has cut it. Averages (not peaks) so
+   * a single desk slap or cough doesn't read as leakage.
+   */
   private updateMicLeak(): void {
     const leak = this.micLeak;
     leak.gameLevel = this.audio.gameOutputLevel();
     const base = this.mic.baseline;
-    const decay = Math.exp(-this.ctx.dt / 3);
-    leak.ratioWhileGameAudible *= decay;
-    leak.ratioWhileCut *= decay;
     if (!base || this.mic.status !== 'granted') return;
     const ratio = this.mic.level / base;
-    if (this.audio.gameCut) leak.ratioWhileCut = Math.max(leak.ratioWhileCut, ratio);
-    else if (leak.gameLevel > 0.005) leak.ratioWhileGameAudible = Math.max(leak.ratioWhileGameAudible, ratio);
+    const k = 1 - Math.exp(-this.ctx.dt / CONFIG.debug.micLeakAverageSec);
+    if (this.audio.gameCut) {
+      leak.ratioWhileCut += (ratio - leak.ratioWhileCut) * k;
+    } else if (leak.gameLevel > CONFIG.debug.micLeakGameLevel) {
+      leak.ratioWhileGameAudible += (ratio - leak.ratioWhileGameAudible) * k;
+    }
   }
 
   private fillDebugInfo(): DebugInfo {
@@ -387,7 +439,14 @@ export const directorRef: { current: Director | null } = { current: null };
 
 /** Runs the director every frame, after IWSDK's input system has sampled the hands. */
 export class DirectorSystem extends createSystem() {
+  private errors = 0;
+
   update(delta: number, time: number): void {
-    directorRef.current?.frame(this.xrFrame ?? null, this.world.xrReferenceSpace ?? null, delta, time);
+    try {
+      directorRef.current?.frame(this.xrFrame ?? null, this.world.xrReferenceSpace ?? null, delta, time);
+    } catch (e) {
+      // One bad frame must not stop the XR animation loop for the rest of the session.
+      if (this.errors++ < 20) console.error('[hold-still] frame error', e);
+    }
   }
 }

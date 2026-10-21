@@ -290,8 +290,9 @@ export class DebugOverlay implements DebugOverlayLike {
     this.t(' aud ', C.dim).t(`${num(leak.ratioWhileGameAudible)}x`).t(' cut ', C.dim).t(`${num(leak.ratioWhileCut)}x  `);
     let verdict = '?';
     let color: string = C.dim;
-    if (st === 'granted' && base !== null && leak.ratioWhileGameAudible > 0.5) {
-      const r = leak.ratioWhileGameAudible;
+    if (st === 'granted' && base !== null && leak.ratioWhileGameAudible > 0) {
+      // Compare against the quiet (cut) reading when there is one; the room baseline otherwise.
+      const r = leak.ratioWhileGameAudible / Math.max(1, leak.ratioWhileCut);
       verdict = r >= CONFIG.debug.micLeakRatio ? 'YES' : 'no';
       color = r >= CONFIG.mic.noiseRatio ? C.bad : r >= CONFIG.debug.micLeakRatio ? C.warn : C.ok;
     }
@@ -381,9 +382,10 @@ export class DebugOverlay implements DebugOverlayLike {
     const lastLine = this.line + maxLines - 1;
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i];
-      const isOpening = k.includes('window') || k.includes('door');
+      const ignored = k.includes('ignored');
+      const isOpening = !ignored && (k.includes('window') || k.includes('door'));
       const item = `${k} ${counts[k]}`;
-      if (!this.item(item, isOpening ? C.ok : C.text, title.length, lastLine)) {
+      if (!this.item(item, ignored ? C.warn : isOpening ? C.ok : C.text, title.length, lastLine)) {
         this.t(` +${keys.length - i}`, C.warn);
         break;
       }

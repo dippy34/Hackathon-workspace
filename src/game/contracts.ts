@@ -33,7 +33,7 @@ export interface HandState {
   readonly aimDir: Vector3;
   /** Thumb-tip to index-tip distance (m). */
   pinchDistance: number;
-  /** Pinch with hysteresis (CONFIG.hands.pinchStartM / pinchEndM). Held while untracked. */
+  /** Pinch with hysteresis (CONFIG.hands.pinchStartM / pinchEndM). Held while untracked, for up to CONFIG.hands.pinchLostGraceSec. */
   pinching: boolean;
   /** Smoothed palm speed (m/s). */
   speed: number;
@@ -304,6 +304,8 @@ export interface ThreatPresenter {
   tick(ctx: FrameContext): void;
   /** Where to draw the teaching hint (world). */
   hintAnchor(ctx: FrameContext, out: Vector3): Vector3;
+  /** Hide every visual now but let sounds already playing finish (the caught cut to black). */
+  hideVisuals(): void;
   /** Instantly hide everything and stop all sound (night restart / ending). */
   reset(): void;
 }

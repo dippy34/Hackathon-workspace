@@ -352,7 +352,7 @@ export class KnockerThreat implements ThreatPresenter {
   }
 
   tick(ctx: FrameContext): void {
-    const dt = Math.min(ctx.dt, 0.1);
+    const dt = Math.min(ctx.dt, CONFIG.maxFrameSec);
     this.time += dt;
     if (this.lingerLeft > 0 && (this.lingerLeft -= dt) <= 0) this.voice.release(0.25);
     switch (this.mode) {
@@ -517,7 +517,7 @@ export class KnockerThreat implements ThreatPresenter {
     this.gapEyes.update(dt);
   }
 
-  private hideVisuals(): void {
+  hideVisuals(): void {
     this.mode = 'idle';
     this.modeT = 0;
     this.meter = 0;

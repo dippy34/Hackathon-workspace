@@ -12,10 +12,6 @@ type Step = 'calibrate' | 'calibrated' | 'placeWindow' | 'placeDoor' | 'done';
 
 const CALIBRATE_TEXT_QUIET = 'Put both hands flat on your desk.\nStay quiet.';
 const CALIBRATE_TEXT_NO_MIC = 'Put both hands flat on your desk.';
-/** Short beat after calibrating so "Good." can land before the next prompt. */
-const CALIBRATED_BEAT_SEC = 1.4;
-/** Calibration forgives tracking flickers shorter than this. */
-const HOLD_GRACE_SEC = 0.35;
 
 /**
  * The intro (DESIGN.md "The intro"): the calibration doubles as the tutorial.
@@ -70,6 +66,12 @@ export class Intro {
     this.text.show(ctx.mic.status === 'granted' ? CALIBRATE_TEXT_QUIET : CALIBRATE_TEXT_NO_MIC, { mode: 'gaze' });
   }
 
+  /** Stop prompting (session ended mid-intro); start() begins again from calibration. */
+  abort(): void {
+    this.reticle.visible = false;
+    this.text.hide(0);
+  }
+
   update(ctx: FrameContext): void {
     this.stepTime += ctx.dt;
     switch (this.step) {
@@ -78,7 +80,7 @@ export class Intro {
         break;
       case 'calibrated':
         // Wait for the beat and for the room scan to have had a fair chance.
-        if (this.stepTime >= CALIBRATED_BEAT_SEC && ctx.room.report.scanAgeSec >= CONFIG.intro.roomScanTimeoutSec) {
+        if (this.stepTime >= CONFIG.intro.calibratedBeatSec && ctx.room.report.scanAgeSec >= CONFIG.intro.roomScanTimeoutSec) {
           this.nextPlacementStep(ctx);
         }
         break;
@@ -109,7 +111,7 @@ export class Intro {
       this.holdSec += ctx.dt;
     } else if (this.holdSec > 0) {
       this.graceSec += ctx.dt;
-      if (this.graceSec > HOLD_GRACE_SEC) {
+      if (this.graceSec > CONFIG.intro.holdGraceSec) {
         this.holdSec = 0;
         this.calibratingMic = false; // the next beginCalibration() restarts the room-level sample
       }
@@ -162,7 +164,7 @@ export class Intro {
     // Place on a fresh pinch (a rising edge), after a short settle so the
     // pinch that confirmed nothing earlier doesn't place instantly.
     const pinched = this.risingPinch(ctx);
-    if (pinched && hand && this.stepTime > 0.6) {
+    if (pinched && hand && this.stepTime > CONFIG.intro.placementSettleSec) {
       ctx.room.place(kind, this.point, ctx.headPos);
       ctx.audio.sounds.oneShot('placed', ctx.audio.gameBus);
       this.reticle.visible = false;
@@ -216,7 +218,7 @@ function handReady(h: HandState, headPos: Vector3): boolean {
     h.tracked &&
     h.palmDownAngleDeg <= CONFIG.hands.flatPalmDownMaxAngleDeg &&
     h.speed <= CONFIG.intro.stillMaxSpeedMps &&
-    h.palm.y < headPos.y - 0.2
+    h.palm.y < headPos.y - CONFIG.intro.minPalmBelowHeadM
   );
 }
 

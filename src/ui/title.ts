@@ -6,6 +6,8 @@ const TEXT = {
   pending: 'Listening for your microphone…',
   granted: 'Microphone ready. Loudness only — nothing is recorded or sent anywhere.',
   off: 'Microphone is off, so the Listener is turned off. You can still play.',
+  /** The mic prompt hasn't answered within CONFIG.title.micGraceSec (a late answer replaces this). */
+  noAnswer: 'No answer from the microphone, so the Listener is turned off. You can still play.',
   noXR: 'This needs the Meta Quest Browser on a Quest 3 or 3S',
   retry: 'Try the mic again',
 } as const;
@@ -126,9 +128,12 @@ export function mountTitle(root: HTMLElement, handlers: TitleHandlers): TitleCon
   begin.addEventListener('click', () => {
     if (pending) return;
     setMicStatus('requesting');
-    // If the permission prompt never answers, don't strand the player on this page.
+    // If the permission prompt never answers, don't strand the player on this page,
+    // and say the Listener will be off (DESIGN.md "Comfort and accessibility"). A late
+    // answer goes through setMicStatus, which replaces this line (e.g. with "granted").
     graceTimer = window.setTimeout(() => {
       micAnswered = true;
+      if (pending) say(micLine, TEXT.noAnswer, 'off');
       refreshEnter();
     }, CONFIG.title.micGraceSec * 1000);
     // Called synchronously so audio resume + getUserMedia keep this click's user activation.
