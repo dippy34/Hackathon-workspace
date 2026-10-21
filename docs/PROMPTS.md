@@ -51,10 +51,10 @@ Find the root cause before changing any code, then fix it and give me exact step
 
 ---
 
-## 4. Playtest feedback (use for M5)
+## 4. Playtest feedback (use for M3)
 
 ```
 Here's playtest feedback from [number] people: [paste notes].
 
-Fix what's in scope for milestone M5 in docs/BUILD_SPEC.md. For anything that would change the "Locked" column, list it as a pitch instead of building it.
+Fix what's in scope for milestone M3 in docs/BUILD_SPEC.md. For anything that would change the "Locked" column, list it as a pitch instead of building it.
 ```

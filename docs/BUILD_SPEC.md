@@ -75,42 +75,44 @@ The names and structure here are suggestions, so organize the code however you t
 
 Stop after each milestone and send the human the report described in [`PROMPTS.md`](PROMPTS.md). The target dates match [`PLAN.md`](PLAN.md).
 
-### M1: Foundation (target: Nov 1)
-- Project scaffolded with IWSDK and auto-deploy to an HTTPS link.
-- An `immersive-ar` session with passthrough and hand tracking.
-- Room scan: log every plane and mesh label the headset reports, and mark windows and doors (or run the placement fallback).
-- Hands: intro calibration plus flat detection. Mic: permission plus live level.
-- Debug overlay showing all of it.
-- **Mic check:** play a loud test sound and show whether the mic level jumps.
-- Dark room: the darkness layer fades in. Spend **no more than ~1 day** on the flashlight-reveal stretch goal.
+### M1: The whole game, basic version (target: Nov 4)
 
-**Done when:** on the Quest 3 the human opens the link and enters AR. They see markers on their real window and door (or can place them), the overlay correctly shows when each hand is flat, and the mic level jumps when they talk.
+**Everything in `DESIGN.md` except the stretch threats**, fully playable start to finish. Function comes first: simple placeholder looks and sounds are fine, and the extras come in M2.
 
-### M2: The core loop (target: Nov 5)
-- Shared threat logic, game flow, attack scheduler.
-- Under the Desk and the Listener, with placeholder sounds.
-- Nights 1 and 3 playable (night 3 temporarily without the Peeker); caught → restart works.
+M1 is big, so **build it in this order and commit as you go**. Each step leans on the ones before it.
 
-**Done when:** the human can both survive and get caught by each threat, and getting caught restarts the night.
+1. **Setup:** IWSDK project, auto-deploy to an HTTPS link, an `immersive-ar` session with passthrough and hand tracking.
+2. **Debug overlay** (from the module table), so every later step can be seen working.
+3. **The senses:**
+   - Room scan, logging every plane and mesh label the headset reports, with window and door markers or the placement fallback.
+   - Hands: desk calibration, flat detection, palm-facing, pinch.
+   - Mic: permission, live level, denied handling.
+4. **Flashlight** (pinch, battery) and the **dark room** fade. A basic fade only; the reveal effect is M2.
+5. **Shared threat logic** (the danger meter) and the **attack scheduler** with every fairness rule, including "a threat's first appearance attacks alone".
+6. **All four threats:** Under the Desk, Listener, Peeker, Knocker. Placeholder visuals are fine (glowing eyes, a simple hand, a door glow). Each has a placeholder **spatial** sound coming from the right place: under the desk, the window, the door. The Listener's silence works for real.
+7. **Game flow:** a simple title screen (with the jumpscare warning and mic-off notice), the intro that calibrates, **all 5 nights**, caught → pause → restart night, and a simple ending.
 
-### M3: Peeker (target: Nov 8)
-- Flashlight plus the Peeker at real windows.
-- Nights 1–3 exactly as designed.
+**Done when:** on the Quest 3, the human opens the link and plays **all 5 nights start to finish, hands only**. They can survive and get caught by each of the four threats, getting caught restarts the night, and no impossible overlaps happen. The debug overlay shows what the room scan found and whether the mic hears the game's own sounds.
 
-**Done when:** a friend plays nights 1–3 hands-only, with no help beyond the intro.
+### M2: The extras (target: Nov 11)
 
-### M4: Complete game (target: Nov 12)
-- The Knocker, nights 4–5, every fairness rule enforced.
-- Title screen (with the jumpscare warning and mic-off notice), the ending, the caught moments.
-- Spatial audio for every threat; swap in real sounds the human provides.
+Make it scary and impressive. This is where most of the "Open for creativity" column happens.
 
-**Done when:** all 5 nights play start to finish with no impossible overlaps.
+- **Real monster looks:** models and animations, still mostly unseen (eyes, fingers, silhouettes).
+- **Real sound design:** swap in the human's recordings and free sounds, make warnings sound distinct, add ambience.
+- **Caught moments:** a proper jumpscare for each threat.
+- **The flashlight-reveal effect:** the beam cuts through the darkness and shows the real room. Spend **no more than ~1 day** on it; if it fights you, keep the basic fade.
+- **Title screen, ending and transitions:** polished, with small "juice" touches.
+- **Stretch:** the Watcher (see `DESIGN.md`). The Crawler only after its rules are written into `DESIGN.md`, so pitch rules first.
 
-### M5: Polish and performance (target: Nov 14)
-- Steady 60fps or better in the Quest Browser through night 5.
-- Fix the problems from the human's playtest notes.
+**Done when:** a friend plays all 5 nights with no help beyond the intro, and gets scared at least once.
+
+### M3: Ship check (target: Nov 14)
+
+- Steady **60fps or better** in the Quest Browser through night 5.
+- Fix what came up in the human's playtests.
 - Debug overlay hidden in the release build.
-- Only if everything above is done: the Watcher (stretch, see `DESIGN.md`).
+- One last full playthrough, hands only.
 
 **Done when:** the release link runs at 60fps or more through night 5, and a full playthrough works hands-only.
 

@@ -21,11 +21,9 @@ Also eligible for special awards: **Best Passthrough** ($25K) and **10-Minute Ch
 | Date | What |
 |---|---|
 | **Now → Oct 25** | Week 0: the setup list below, then paste the kickoff prompt |
-| Nov 1 | M1: foundation working on the headset |
-| Nov 5 | M2: the core loop (Under the Desk + Listener) |
-| Nov 8 | M3: Peeker, nights 1–3 |
-| Nov 12 | M4: full game, 5 nights |
-| Nov 14 | M5: polish + 60fps |
+| Nov 4 | **M1: the whole game, basic version.** All 4 monsters, all 5 nights, playable start to finish. |
+| Nov 11 | **M2: the extras.** Real monsters, real sounds, jumpscares, the flashlight-reveal effect |
+| Nov 14 | **M3: ship check.** 60fps, playtest fixes, release build |
 | Nov 15 | Record and cut the trailer |
 | **Nov 16** | **Submit** (our target) |
 | Nov 18, 8pm UTC | Real deadline. Keep these 2 days as buffer only. |
