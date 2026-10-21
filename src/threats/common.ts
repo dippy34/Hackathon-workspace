@@ -372,23 +372,55 @@ export class GlowingEyes {
 
 // ─── Audio slots ──────────────────────────────────────────────────────────
 
+/** Ramp a gain to 0 over `fadeSec` (no click); returns the fade actually used. */
+function fadeGainOut(gain: GainNode, fadeSec: number): number {
+  const fade = Math.max(0.01, fadeSec);
+  try {
+    const now = gain.context.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.linearRampToValueAtTime(0, now + fade);
+  } catch {
+    /* context closed */
+  }
+  return fade;
+}
+
+function disconnectQuietly(node: AudioNode | null): void {
+  try {
+    node?.disconnect();
+  } catch {
+    /* already gone */
+  }
+}
+
 /**
  * One spatial voice plus a private gain in front of it, so it can be faded
- * out (no click) and is always disposed. Connect sources to `input`.
+ * out (no click) and is always disposed. Connect one-shots (retreat sounds)
+ * to `input` and the threat's warning loops to `loopInput`, which sits behind
+ * a counter duck (`setDuck`) so the warning can drop well below its plain
+ * level while the player is countering, without touching the one-shots.
  */
 export class VoiceSlot {
   private voice: SpatialVoice | null = null;
   private gain: GainNode | null = null;
+  private duck: GainNode | null = null;
+  private duckLevel = 1;
 
   get input(): AudioNode | null {
     return this.gain;
+  }
+
+  /** Input for warning loops: feeds `input` through the counter duck. */
+  get loopInput(): AudioNode | null {
+    return this.duck;
   }
 
   get open(): boolean {
     return this.voice !== null;
   }
 
-  /** Release any current voice, then open a new one. Returns the input node. */
+  /** Release any current voice, then open a new one (duck at 1). Returns the input node. */
   openAt(audio: AudioEngineLike, position: Vector3, bus: 'game' | 'over', refDistance?: number): AudioNode | null {
     this.release(0.05);
     try {
@@ -396,12 +428,18 @@ export class VoiceSlot {
       const gain = audio.ctx.createGain();
       gain.gain.value = 1;
       gain.connect(voice.input);
+      const duck = audio.ctx.createGain();
+      duck.gain.value = 1;
+      duck.connect(gain);
       this.voice = voice;
       this.gain = gain;
+      this.duck = duck;
+      this.duckLevel = 1;
     } catch (err) {
       console.warn('[threats] could not open a voice', err);
       this.voice = null;
       this.gain = null;
+      this.duck = null;
     }
     return this.gain;
   }
@@ -410,30 +448,75 @@ export class VoiceSlot {
     this.voice?.setPosition(p);
   }
 
+  /**
+   * Glide the loop duck toward `level` (1 = plain warning level) with time
+   * constant `tcSec`. Only schedules when the target actually changes, so it
+   * is cheap to call every frame with a two-state target.
+   */
+  setDuck(level: number, tcSec: number): void {
+    const duck = this.duck;
+    if (!duck) return;
+    const x = level < 0 ? 0 : level;
+    if (Math.abs(x - this.duckLevel) < 0.005) return;
+    this.duckLevel = x;
+    try {
+      duck.gain.setTargetAtTime(x, duck.context.currentTime, Math.max(0.005, tcSec));
+    } catch {
+      /* context closed */
+    }
+  }
+
   /** Fade out over `fadeSec`, then disconnect and dispose. Safe to call twice. */
   release(fadeSec = 0.06): void {
     const voice = this.voice;
     const gain = this.gain;
+    const duck = this.duck;
     this.voice = null;
     this.gain = null;
+    this.duck = null;
     if (!voice || !gain) return;
-    const fade = Math.max(0.01, fadeSec);
-    try {
-      const now = gain.context.currentTime;
-      gain.gain.cancelScheduledValues(now);
-      gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(0, now + fade);
-    } catch {
-      /* context closed */
-    }
+    const fade = fadeGainOut(gain, fadeSec);
     setTimeout(() => {
-      try {
-        gain.disconnect();
-      } catch {
-        /* already gone */
-      }
+      disconnectQuietly(duck);
+      disconnectQuietly(gain);
       voice.dispose();
     }, (fade + 0.05) * 1000);
+  }
+}
+
+/**
+ * A private, non-spatial gain on a bus, so a one-shot played into it can
+ * still be cut off (reset) instead of running on unowned.
+ */
+export class BusSlot {
+  private gain: GainNode | null = null;
+
+  get input(): AudioNode | null {
+    return this.gain;
+  }
+
+  /** Release any current gain, then open a new one on `bus`. Returns its input. */
+  openOn(audio: AudioEngineLike, bus: 'game' | 'over'): AudioNode | null {
+    this.release(0.05);
+    try {
+      const gain = audio.ctx.createGain();
+      gain.gain.value = 1;
+      gain.connect(bus === 'over' ? audio.overBus : audio.gameBus);
+      this.gain = gain;
+    } catch (err) {
+      console.warn('[threats] could not open a bus slot', err);
+      this.gain = null;
+    }
+    return this.gain;
+  }
+
+  /** Fade out over `fadeSec`, then disconnect. Safe to call twice. */
+  release(fadeSec = 0.06): void {
+    const gain = this.gain;
+    this.gain = null;
+    if (!gain) return;
+    const fade = fadeGainOut(gain, fadeSec);
+    setTimeout(() => disconnectQuietly(gain), (fade + 0.05) * 1000);
   }
 }
 

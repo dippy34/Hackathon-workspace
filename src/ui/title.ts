@@ -7,7 +7,7 @@ const TEXT = {
   granted: 'Microphone ready. Loudness only — nothing is recorded or sent anywhere.',
   off: 'Microphone is off, so the Listener is turned off. You can still play.',
   noXR: 'This needs the Meta Quest Browser on a Quest 3 or 3S',
-  retry: 'Try the microphone again',
+  retry: 'Try the mic again',
 } as const;
 
 const MARKUP = /* html */ `
@@ -16,7 +16,7 @@ const MARKUP = /* html */ `
 <main class="hs-page">
   <header class="hs-head">
     <h1 class="hs-logo" aria-label="Hold Still"><span class="hs-logo-word">HOLD</span> <span class="hs-logo-word">STILL</span></h1>
-    <p class="hs-tagline">Your body is the controller. Your room is the map. No weapons. Just hold still.</p>
+    <p class="hs-tagline"><span>Your body is the controller. Your room is the map.</span> <span>No weapons. Just hold still.</span></p>
   </header>
 
   <div class="hs-info">
@@ -111,7 +111,9 @@ export function mountTitle(root: HTMLElement, handlers: TitleHandlers): TitleCon
         say(micLine, TEXT.off, 'off');
         micAnswered = true;
         begin.disabled = false; // let the player try again (e.g. after allowing it in settings)
+        begin.classList.remove('hs-done');
         beginLabel.textContent = TEXT.retry;
+        beginNum.textContent = '1';
         break;
       case 'idle':
         say(micLine, null);

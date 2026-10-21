@@ -58,11 +58,16 @@ export class Mic implements MicLike {
   request(): Promise<MicStatus> {
     if (this._status === 'granted') return Promise.resolve('granted');
     if (this.pending) return this.pending;
-    this.pending = this.open().then((s) => {
-      this._status = s;
-      this.pending = null;
-      return s;
-    });
+    this.pending = this.open()
+      .catch((err: unknown): MicStatus => {
+        console.warn('[mic] setup failed:', err);
+        return 'unavailable';
+      })
+      .then((s) => {
+        this._status = s;
+        this.pending = null;
+        return s;
+      });
     return this.pending;
   }
 
@@ -135,10 +140,24 @@ export class Mic implements MicLike {
       return name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'unavailable';
     }
 
+    // Anything below can throw (e.g. a closed context, or a sample-rate mismatch in
+    // createMediaStreamSource): give the mic back and carry on without it.
+    try {
+      return this.attach(stream);
+    } catch (err) {
+      console.warn('[mic] could not start the level meter:', err);
+      this.release(stream);
+      this._settings = null;
+      return 'unavailable';
+    }
+  }
+
+  /** Hang the analyser off a granted stream. May throw; the caller releases the stream. */
+  private attach(stream: MediaStream): MicStatus {
     const track = stream.getAudioTracks()[0];
     if (!track) {
-      stream.getTracks().forEach((t) => t.stop());
       console.warn('[mic] stream has no audio track');
+      this.release(stream);
       return 'unavailable';
     }
     // What the browser actually applied (Quest may ignore EC/NS/AGC = false).
@@ -159,14 +178,20 @@ export class Mic implements MicLike {
     return 'granted';
   }
 
-  /** Permission revoked or device lost: the Listener has to switch off. */
-  private readonly onTrackEnded = (): void => {
-    console.warn('[mic] track ended (permission revoked or device lost)');
+  /** Stop the stream and drop the meter's nodes. */
+  private release(stream: MediaStream | null): void {
+    stream?.getAudioTracks()[0]?.removeEventListener('ended', this.onTrackEnded);
     this.source?.disconnect();
-    this.stream?.getTracks().forEach((t) => t.stop());
+    stream?.getTracks().forEach((t) => t.stop());
     this.source = null;
     this.analyser = null;
     this.stream = null;
+  }
+
+  /** Permission revoked or device lost: the Listener has to switch off. */
+  private readonly onTrackEnded = (): void => {
+    console.warn('[mic] track ended (permission revoked or device lost)');
+    this.release(this.stream);
     this.calibrating = false;
     this._level = 0;
     this._status = 'unavailable';

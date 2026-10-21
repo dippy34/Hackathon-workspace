@@ -13,7 +13,6 @@ import {
   OneFactor,
   Quaternion,
   ShaderMaterial,
-  SpotLight,
   Sprite,
   SpriteMaterial,
   Vector3,
@@ -153,8 +152,9 @@ function makeHaloTexture(): CanvasTexture {
 
 /**
  * The flashlight (DESIGN.md Peeker): on while a hand pinches during a night,
- * battery permitting. Owns the game's only real-time light, a cheap
- * volumetric beam and the battery bead (the only UI during nights).
+ * battery permitting. Draws a cheap volumetric beam and the battery bead (the
+ * only UI during nights). No real light: every material is unlit, so the beam
+ * is faked in its shader and threats react through containsPoint().
  */
 export class Flashlight implements FlashlightLike {
   readonly origin = new Vector3();
@@ -175,7 +175,6 @@ export class Flashlight implements FlashlightLike {
   private stutterLevel = 1;
 
   private readonly rig = new Group();
-  private readonly light: SpotLight;
   private readonly cone: Mesh;
   private readonly coneMat: ShaderMaterial;
   private readonly bead = new Group();
@@ -188,13 +187,6 @@ export class Flashlight implements FlashlightLike {
   constructor(world: World) {
     const halfVisual = CONFIG.flashlight.beamHalfAngleDeg * CONFIG.flashlight.visualAngleScale * DEG;
     const range = CONFIG.flashlight.beamRangeM;
-
-    // The light stays visible with intensity 0 when off: toggling visibility changes
-    // the scene's light count and recompiles every lit material (a hitch).
-    this.light = new SpotLight(LIGHT_COLOR, 0, range, halfVisual, 0.6, 2);
-    this.light.castShadow = false;
-    this.rig.add(this.light, this.light.target);
-    this.light.target.position.copy(FORWARD);
 
     const geo = new ConeGeometry(Math.tan(halfVisual) * range, range, 32, 1, false);
     geo.translate(0, -range / 2, 0).rotateX(Math.PI / 2); // apex at origin, opening toward -Z
@@ -348,7 +340,6 @@ export class Flashlight implements FlashlightLike {
 
     this.rig.position.copy(this.origin);
     this.rig.quaternion.copy(this.tmpQ.setFromUnitVectors(FORWARD, this.direction));
-    this.light.intensity = CONFIG.flashlight.lightIntensity * level;
     const u = this.coneMat.uniforms;
     u.uGlow.value = CONFIG.flashlight.beamGlow * level;
     u.uTime.value = this.time;
@@ -392,7 +383,6 @@ export class Flashlight implements FlashlightLike {
   }
 
   private hideVisuals(): void {
-    this.light.intensity = 0;
     this.cone.visible = false;
     this.bead.visible = false;
   }

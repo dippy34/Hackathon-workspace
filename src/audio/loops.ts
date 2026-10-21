@@ -19,7 +19,7 @@ const L = CONFIG.audio.loopLevels;
 
 // ─── Ambience: the night room ─────────────────────────────────────────
 
-const HUM_GAIN = 0.016;
+const HUM_GAIN = 0.02;
 
 /**
  * Low room tone (brown noise lowpassed ~150 Hz) + a breath of air so small
@@ -43,14 +43,14 @@ class Ambience extends Loop {
     const room = this.keepSource(new AudioBufferSourceNode(ctx, { buffer: b.brown, loop: true }));
     const roomHp = this.keep(new BiquadFilterNode(ctx, { type: 'highpass', frequency: 28, Q: 0.5 }));
     const roomLp = this.keep(new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 150, Q: 0.4 }));
-    const roomG = this.keep(new GainNode(ctx, { gain: 0.2 }));
+    const roomG = this.keep(new GainNode(ctx, { gain: 0.15 }));
     room.connect(roomHp).connect(roomLp).connect(roomG).connect(this.bus);
     room.start(now, Math.random() * b.brown.duration * 0.9);
 
     // Air: very faint mid-band so the Quest's small speakers carry the room too.
     const air = this.keepSource(new AudioBufferSourceNode(ctx, { buffer: b.pink, loop: true }));
     const airBp = this.keep(new BiquadFilterNode(ctx, { type: 'bandpass', frequency: 450, Q: 0.5 }));
-    const airG = this.keep(new GainNode(ctx, { gain: 0.05 }));
+    const airG = this.keep(new GainNode(ctx, { gain: 0.08 }));
     air.connect(airBp).connect(airG).connect(this.bus);
     air.start(now, Math.random() * b.pink.duration * 0.9);
 
@@ -89,13 +89,14 @@ class Ambience extends Loop {
     let next = this.catchUp(this.next, now);
     while (next < horizon) {
       this.houseEvent(next, x);
-      next += rand(A.ambienceEventMinSec, A.ambienceEventMaxSec) * (1 - 0.4 * x);
+      next += Math.max(0.5, rand(A.ambienceEventMinSec, A.ambienceEventMaxSec) * (1 - 0.4 * x));
     }
     this.next = next;
   }
 
   private houseEvent(t: number, x: number): void {
     const k = this.k;
+    if (k.busy) return;
     const b = k.b;
     const pan = rand(-0.9, 0.9);
     const r = Math.random();
@@ -165,24 +166,25 @@ class Scratching extends Loop {
     if (k.busy) return;
     const g = k.group(this.live);
     const env = g.gain(0, this.bus);
-    const center = rand(1500, 3300) * (1 + 0.5 * x);
+    const center = rand(1500, 3300) * (1 + 0.3 * x);
     const bp = g.filter('bandpass', center, Math.max(0.8, rand(1.3, 2.6) - 0.7 * x), env);
     bp.frequency.setValueAtTime(center, t);
     bp.frequency.linearRampToValueAtTime(Math.min(5200, center * rand(0.7, 1.35)), t + dur);
     const wood = g.filter('bandpass', rand(650, 950), 2);
     const woodG = g.gain(0.35, env);
     wood.connect(woodG);
-    const s = g.buffer(k.b.grit, true, rand(0.75, 1.05) + 0.45 * x);
+    const s = g.buffer(k.b.grit, true, rand(0.75, 1.05) + 0.35 * x);
     s.connect(bp);
     s.connect(wood);
     if (x > 0.45 && Math.random() < x) {
-      const top = g.filter('highpass', 4200, 0.8);
-      const topG = g.gain(0.5 * x, env);
+      // Harshness: a thin bright edge (kept quiet: too much reads as hiss, not nails).
+      const top = g.filter('bandpass', rand(4800, 6200), 1.6);
+      const topG = g.gain(0.3 * x, env);
       s.connect(top);
       top.connect(topG);
     }
     // Irregular pressure through the stroke.
-    const peak = rand(0.35, 0.8) * (0.55 + 0.6 * x);
+    const peak = rand(0.9, 2.0) * (0.8 + 0.4 * x);
     const a = rand(0.008, 0.05);
     const p = env.gain;
     p.setValueAtTime(0, t);
@@ -196,7 +198,7 @@ class Scratching extends Loop {
 
   private knock(t: number, x: number): void {
     const b = this.k.b;
-    this.k.sample(this.bus, t, pick(b.knocks), rand(0.25, 0.45) * (0.7 + 0.5 * x), { rate: rand(1.6, 2.3), lp: 2600 }, this.live);
+    this.k.sample(this.bus, t, pick(b.knocks), rand(0.12, 0.22) * (0.7 + 0.5 * x), { rate: rand(1.6, 2.3), lp: 2600, hp: 380 }, this.live);
   }
 }
 
@@ -314,7 +316,7 @@ class DoorKnocks extends Loop {
         }
         const prog = clamp01((next - this.rattleStart) / Math.max(0.01, this.rattleEnd - this.rattleStart));
         const shape = Math.sqrt(Math.sin(Math.PI * prog));
-        k.sample(this.bus, next, pick(b.clicks), (0.2 + 0.4 * shape) * rand(0.6, 1) * (0.8 + 0.4 * x), { rate: rand(0.85, 1.2) }, this.live);
+        if (!k.busy) k.sample(this.bus, next, pick(b.clicks), (0.2 + 0.4 * shape) * rand(0.6, 1) * (0.8 + 0.4 * x), { rate: rand(0.85, 1.2) }, this.live);
         next += Math.random() < 0.1 ? rand(0.08, 0.2) : rand(0.022, 0.05);
       } else {
         if (this.left <= 0) this.left = 2 + ((Math.random() * (2 + 2.5 * x)) | 0);
@@ -456,7 +458,7 @@ class Heartbeat extends Loop {
         k.sample(this.bus, next, k.b.lub, v, { rate: rand(0.98, 1.02) }, this.live);
         k.sample(this.bus, next + lerp(0.3, 0.22, x), k.b.dub, v * 0.8, undefined, this.live);
       }
-      next += (60 / lerp(A.heartbeatBpmMin, A.heartbeatBpmMax, x)) * rand(0.97, 1.03);
+      next += (60 / Math.min(240, Math.max(20, lerp(A.heartbeatBpmMin, A.heartbeatBpmMax, x)))) * rand(0.97, 1.03);
     }
     this.next = next;
   }

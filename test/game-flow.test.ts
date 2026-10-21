@@ -395,6 +395,7 @@ describe('GameFlow: an event handler that moves the flow', () => {
   it('a debug jump from onAttackStart stops the old runner at once, so nothing leaks into the new night', () => {
     const log: string[] = [];
     let jumped = false;
+    let startedAt = -1;
     let flow!: GameFlow;
     flow = new GameFlow(
       {
@@ -403,6 +404,7 @@ describe('GameFlow: an event handler that moves the flow', () => {
           log.push(`start ${a.id}`);
           if (!jumped) {
             jumped = true;
+            startedAt = flow.runner!.elapsedSec;
             flow.debugJumpToNight(1);
           }
         },
@@ -416,11 +418,13 @@ describe('GameFlow: an event handler that moves the flow', () => {
     runPhase(flow, never); // -> night 5
     const old = flow.runner!;
     // Step until an attack is due within one substep, then take a 0.1 s frame (3 substeps).
-    while (!jumped) {
+    for (let i = 0; !jumped && i < 72 * 60; i++) {
       const due = Math.min(...old.tuning.threats.map((id) => old.nextAttackInSec(id) ?? Infinity));
       flow.update(due > 0 && due < 1 / 60 ? 0.1 : DT, never);
     }
-    const startedAt = old.elapsedSec;
+    expect(jumped).toBe(true);
+    // The rest of that 0.1 s frame did not run on the abandoned runner.
+    expect(old.elapsedSec).toBe(startedAt);
     expect(log.slice(-2)).toEqual([expect.stringMatching(/^start /), 'phase nightIntro n1']);
     expect(flow.phase).toBe('nightIntro');
     expect(flow.night).toBe(1);

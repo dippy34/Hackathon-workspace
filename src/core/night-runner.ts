@@ -26,9 +26,9 @@ export const MAX_SUBSTEP_SEC = 1 / 30;
  * could start an attack and catch the player inside a single update(), with no
  * rendered frame ever showing the warning. 0.1 s is below every effective
  * "caught after" in the shipped table (the shortest is the Listener's
- * 0.3 s / 1.6 = 0.19 s on night 5). Engine robustness constant, not game tuning.
+ * 0.3 s / 1.6 = 0.19 s on night 5). Lives in CONFIG.maxFrameSec.
  */
-export const MAX_FRAME_SEC = 0.1;
+export const MAX_FRAME_SEC: number = CONFIG.maxFrameSec;
 
 type Block = 'max concurrent' | 'teaching alone' | 'closing' | 'fairness' | null;
 

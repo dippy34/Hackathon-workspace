@@ -3,7 +3,7 @@
  * shared three.js context when an XR session ends; we keep control of ours).
  *
  *   sounds ─┬─> gameBus (masterGain; the Listener cuts it to 0) ─┐
- *           │      └─> analyser (gameOutputLevel, debug)          ├─> master ─> limiter ─> speakers
+ *           │      └─> analyser (gameOutputLevel, debug)          ├─> master ─> 30 Hz HPF ─> limiter ─> speakers
  *           └─> overBus (masterGain; ringing, caught screams) ────┘
  *
  * Spatial voices are HRTF PannerNodes in world space; updateListener() copies
@@ -116,6 +116,8 @@ export class AudioEngine implements AudioEngineLike {
   readonly master: GainNode;
   readonly sounds: ProceduralSoundBank;
   private readonly limiter: DynamicsCompressorNode;
+  /** Strips infrasonic energy that would only make the limiter pump. */
+  private readonly subCut: BiquadFilterNode;
   private readonly analyser: AnalyserNode;
   private readonly levelBuf: Float32Array<ArrayBuffer>;
   private cut = false;
@@ -136,8 +138,10 @@ export class AudioEngine implements AudioEngineLike {
       release: 0.15,
     });
     this.limiter.connect(ctx.destination);
+    this.subCut = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 30, Q: 0.7 });
+    this.subCut.connect(this.limiter);
     this.master = new GainNode(ctx, { gain: 1 });
-    this.master.connect(this.limiter);
+    this.master.connect(this.subCut);
 
     this.gameBus = new GainNode(ctx, { gain: CONFIG.audio.masterGain });
     this.overBus = new GainNode(ctx, { gain: CONFIG.audio.masterGain });

@@ -5,7 +5,8 @@
  * Mostly unseen: two small pale eyes low under the desk's near edge and, as
  * the meter rises, four long bony fingers that curl up over the near edge and
  * creep onto the desk between the player's hands. Countered: the fingers
- * twitch, tremble and slowly slide back down; the scratching nearly stops.
+ * twitch, tremble and slowly slide back down; the scratching nearly stops
+ * (its loop is ducked to threatFx.counterDuck).
  * Leave: they withdraw, deskRetreat. Caught: a pale hand lunges up at the face
  * (~0.35 s) with a 'grab' on the over-bus, then the director cuts to black.
  *
@@ -69,14 +70,12 @@ const THUMB_RADIUS = [0.0086, 0.0071] as const;
 // Joint curls (rad; negative curls over the desk, away from the player).
 const POSE_UP = [0.0, -0.12, -0.15] as const;
 const POSE_HOOK = [-1.25, -0.55, -0.38] as const;
-const POSE_REACH = [-1.42, -0.32, -0.22] as const;
+/** Full reach: the hand has pulled itself up over the edge and the long fingers lie almost straight across the desk. */
+const POSE_REACH = [-1.28, -0.1, -0.08] as const;
 const POSE_SPREAD = [-0.12, -0.18, -0.12] as const;
 const POSE_GRAB = [-0.75, -0.95, -0.7] as const;
 /** Creep progress at which the fingers are hooked over the edge. */
 const HOOK_AT = 0.55;
-
-/** How far in front of the eyes the caught hand ends up (m). */
-const LUNGE_FACE_DIST = 0.15;
 
 export class UnderDeskThreat implements ThreatPresenter {
   readonly id = 'underDesk' as const;
@@ -177,8 +176,9 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.eyes.set(0);
     this.root.visible = true;
 
-    const input = this.voice.openAt(ctx.audio, this.voicePos, 'game');
-    if (input) this.scratch.start(ctx.audio.sounds.scratching(input), 0.3);
+    this.voice.openAt(ctx.audio, this.voicePos, 'game');
+    const loopIn = this.voice.loopInput;
+    if (loopIn) this.scratch.start(ctx.audio.sounds.scratching(loopIn), 0.3);
   }
 
   update(attack: AttackView, _ctx: FrameContext): void {
@@ -267,7 +267,7 @@ export class UnderDeskThreat implements ThreatPresenter {
     const target = smoothstep(0.03, 0.97, this.meter);
     this.p = damp(this.p, target, target > this.p ? 7 : 1.4, dt);
     this.fade = damp(this.fade, smoothstep(0.02, 0.2, this.p), 8, dt);
-    this.eyeFade = Math.min(1, this.eyeFade + dt / 1.2);
+    this.eyeFade = Math.min(1, this.eyeFade + dt / FX.eyeFadeInSec);
 
     this.poseCreep(this.p, this.counterBlend, this.twitch);
 
@@ -284,6 +284,7 @@ export class UnderDeskThreat implements ThreatPresenter {
 
     // Danger you can hear: scratching follows the meter, and almost stops while held down.
     this.scratch.set((0.3 + 0.7 * this.meter) * lerp(1, 0.22, cb));
+    this.voice.setDuck(this.countering ? CONFIG.threatFx.counterDuck : 1, CONFIG.threatFx.counterDuckSec);
   }
 
   private tickLeaving(ctx: FrameContext, dt: number): void {
@@ -308,7 +309,7 @@ export class UnderDeskThreat implements ThreatPresenter {
     const e = easeOutCubic(t);
 
     // Lunge target: just in front of the eyes, a little low (root-local).
-    pointInFrontOfHead(ctx.headPos, ctx.headForward, LUNGE_FACE_DIST, -0.03, this.tmpB);
+    pointInFrontOfHead(ctx.headPos, ctx.headForward, FX.lungeFaceDistM, -0.03, this.tmpB);
     this.root.worldToLocal(this.tmpA.copy(this.tmpB));
     const hold = smoothstep(0.9, 1.2, u);
     const shake = 0.004 * hold;
@@ -396,9 +397,10 @@ export class UnderDeskThreat implements ThreatPresenter {
     } else {
       const k = (p - HOOK_AT) / (1 - HOOK_AT);
       for (let i = 0; i < 3; i++) pose[i] = lerp(POSE_HOOK[i] ?? 0, POSE_REACH[i] ?? 0, k);
-      hy = lerp(0.016, 0.034, k);
-      hz = lerp(0.014, -0.045, k);
-      pitch = lerp(0, -0.3, k);
+      // Knuckles rise over the edge; the back of the hand tilts toward the player (pulling itself up).
+      hy = lerp(0.016, 0.05, k);
+      hz = lerp(0.014, 0.004, k);
+      pitch = lerp(0, -0.45, k);
     }
 
     const shake = tw * 0.004;

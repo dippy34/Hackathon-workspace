@@ -22,6 +22,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   PlaneGeometry,
+  Quaternion,
   SRGBColorSpace,
   Vector3,
   type Entity,
@@ -48,8 +49,15 @@ function openingKind(label: string): FeatureKind | null {
   return null;
 }
 
-function fmt(v: Vector3): string {
+function fmt(v: { x: number; y: number; z: number }): string {
   return `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`;
+}
+
+/** Heading (deg, 0 = facing -Z, + = turned left) of an orientation's forward (-Z) axis. */
+function yawDeg(q: { x: number; y: number; z: number; w: number }): number {
+  const fx = -2 * (q.x * q.z + q.w * q.y);
+  const fz = -(1 - 2 * (q.x * q.x + q.y * q.y));
+  return (Math.atan2(-fx, -fz) * 180) / Math.PI;
 }
 
 class Feature implements RoomFeature {
@@ -126,6 +134,7 @@ export class RoomScanner implements RoomScannerLike {
   private readonly loggedPlaneLabels = new Set<string>();
   private readonly loggedMeshLabels = new Set<string>();
   private session: XRSession | null = null;
+  private sessionNo = 0;
   private frameNo = 0;
   private summaryLogged = false;
   private markersVisible = false;
@@ -142,6 +151,7 @@ export class RoomScanner implements RoomScannerLike {
   private measuredWidth = 0;
   private measuredHeight = 0;
   private readonly logPos = new Vector3();
+  private readonly logQuat = new Quaternion();
   private readonly invMat = new Matrix4();
   private readonly rayOrigin = new Vector3();
   private readonly rayDir = new Vector3();
@@ -178,12 +188,13 @@ export class RoomScanner implements RoomScannerLike {
       'position',
       new Float32BufferAttribute([-c, 0, 0, c, 0, 0, 0, -c, 0, 0, c, 0, 0, 0, 0, 0, 0, 0.2], 3),
     );
+    world.renderer?.xr?.addEventListener?.('sessionend', this.logSessionEnd);
   }
 
   // ─── Per frame ──────────────────────────────────────────────────────────
 
   update(frame: XRFrame, refSpace: XRReferenceSpace, dt: number): void {
-    if (frame.session !== this.session) this.startSession(frame);
+    if (frame.session !== this.session) this.startSession(frame, refSpace);
     const report = this.report;
     report.scanAgeSec += dt;
     this.frameNo++;
@@ -467,11 +478,19 @@ export class RoomScanner implements RoomScannerLike {
   // ─── Session + logging ──────────────────────────────────────────────────
 
   /**
-   * A new XR session has a new reference space, so detected features are
-   * dropped and re-detected. Placed ones are kept (like the desk calibration).
+   * XRPlane / XRMesh objects belong to their session, so a new session rebuilds
+   * every detection and drops the detected features: they come straight back
+   * from the new scan, in the new session's coordinates, whether or not its
+   * origin moved. Placed features are kept, like the director's desk
+   * calibration; both assume Quest keeps the same local-floor origin for every
+   * session of the page. UNVERIFIED: compare the head pose logged at session
+   * end with the next session's start. If the origin moves, placed features and
+   * the desk must be redone on resume (re-run the intro) or anchored (XRAnchor).
    */
-  private startSession(frame: XRFrame): void {
+  private startSession(frame: XRFrame, refSpace: XRReferenceSpace): void {
     this.session = frame.session;
+    this.sessionNo++;
+    this.logSessionStart(frame, refSpace);
     const features = frame.session.enabledFeatures;
     this.report.planeDetection = features
       ? features.includes('plane-detection')
@@ -491,6 +510,23 @@ export class RoomScanner implements RoomScannerLike {
       `[room] scan started: plane-detection ${this.report.planeDetection}, mesh-detection ${this.report.meshDetection}`,
     );
   }
+
+  /** Once per session (allocates): where the origin put the head, plus the placed features kept. */
+  private logSessionStart(frame: XRFrame, refSpace: XRReferenceSpace): void {
+    const t = frame.getViewerPose(refSpace)?.transform;
+    const head = t ? `head ${fmt(t.position)} yaw ${yawDeg(t.orientation).toFixed(0)}°` : 'no viewer pose yet';
+    const kept = [...this.windowList, ...this.doorList]
+      .filter((f) => f.source === 'placed')
+      .map((f) => `${f.kind} ${fmt(f.position)}`);
+    console.log(`[room] session ${this.sessionNo} start: ${head}; kept placed: ${kept.length ? kept.join(', ') : 'none'}`);
+  }
+
+  private readonly logSessionEnd = (): void => {
+    const head = this.world.player.head;
+    head.getWorldPosition(this.logPos);
+    head.getWorldQuaternion(this.logQuat);
+    console.log(`[room] session ${this.sessionNo} end: head ${fmt(this.logPos)} yaw ${yawDeg(this.logQuat).toFixed(0)}°`);
+  };
 
   private dropDetected(list: Feature[]): void {
     for (let i = list.length - 1; i >= 0; i--) {

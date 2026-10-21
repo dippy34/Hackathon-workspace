@@ -13,7 +13,6 @@ import type { AttackView } from '../core/types.js';
 import type { DebugInfo, DebugOverlayLike, FrameContext, HandState, RoomFeature } from '../game/contracts.js';
 
 const DEG = Math.PI / 180;
-const UP = new Vector3(0, 1, 0);
 
 // ─── Panel layout (canvas pixels) ─────────────────────────────────────────
 
@@ -26,8 +25,12 @@ const MAX_LINES = Math.floor((H - 2 * PAD) / LINE_PX);
 const FONT = `600 ${FONT_PX}px ui-monospace, "DejaVu Sans Mono", "Droid Sans Mono", Menlo, Consolas, monospace`;
 const LOG_LINES = 5;
 const BAR_CELLS = 10;
-/** Lazy follow (no desk yet): re-centre once the panel is this far off the head's yaw. */
-const FOLLOW_DEADZONE_DEG = 35;
+/**
+ * Lazy follow (no desk yet): re-centre once the head has turned this far from
+ * the followed yaw. Well past overlayHeadLeftDeg, so turning to read the panel
+ * never sets it off.
+ */
+const FOLLOW_DEADZONE_DEG = 50;
 
 const C = {
   text: '#d9d1c1',
@@ -36,7 +39,7 @@ const C = {
   ok: '#7fd494',
   warn: '#e9b04e',
   bad: '#ff6a5c',
-  bg: 'rgba(6, 8, 12, 0.86)',
+  bg: `rgba(6, 8, 12, ${CONFIG.debug.overlayBgOpacity})`,
   edge: 'rgba(150, 165, 190, 0.35)',
   track: 'rgba(255, 255, 255, 0.09)',
 } as const;
@@ -56,7 +59,8 @@ const level = (x: number, warn: number, bad: number): string => (x < warn ? C.ok
 
 /**
  * Development overlay (BUILD_SPEC "Debug overlay"): a floating canvas-texture
- * panel above the desk with every sense, threat and room-scan value. Hidden in
+ * panel off to the player's left with every sense, threat and room-scan value,
+ * kept out of the central view (gaze cards, windows, the Peeker). Hidden in
  * release (?debug=0). Positioned every frame; the canvas redraws at most
  * CONFIG.debug.overlayHz times a second.
  */
@@ -127,14 +131,21 @@ export class DebugOverlay implements DebugOverlayLike {
 
   // ─── Placement ─────────────────────────────────────────────────────────
 
-  /** Above the far side of the desk, else lazily following the head (front-left); yaw-billboarded. */
+  /**
+   * Standing on the desk to the player's left, else lazily following the head
+   * (left and a little down). Always turned (and tilted back) to face the head.
+   */
   private place(ctx: FrameContext): void {
     const d = CONFIG.debug;
     const head = ctx.headPos;
     const desk = ctx.desk;
     if (desk) {
-      this.pos.copy(desk.center).addScaledVector(desk.towardPlayer, -d.overlayBeyondDeskM);
-      this.pos.y += d.overlayAboveDeskM;
+      // Player's left = (-towardPlayer.z, 0, towardPlayer.x).
+      const t = desk.towardPlayer;
+      this.pos.copy(desk.center).addScaledVector(t, -d.overlayBeyondDeskM);
+      this.pos.x -= t.z * d.overlayDeskLeftM;
+      this.pos.z += t.x * d.overlayDeskLeftM;
+      this.pos.y = desk.height + d.overlayAboveDeskM;
       this.followPlaced = false;
     } else {
       const f = ctx.headForward;
@@ -152,17 +163,18 @@ export class DebugOverlay implements DebugOverlayLike {
         if (Math.abs(off) < 3 * DEG) this.recentring = false;
       }
       this.anchor.lerp(head, 1 - Math.exp(-ctx.dt * 2));
-      // Forward = (-sin yaw, 0, -cos yaw); left = (-cos yaw, 0, sin yaw).
-      const s = Math.sin(this.followYaw);
-      const c = Math.cos(this.followYaw);
+      // Direction for (yaw, pitch) = (-sin yaw cos pitch, sin pitch, -cos yaw cos pitch); +yaw turns left.
+      const panelYaw = this.followYaw + d.overlayHeadLeftDeg * DEG;
+      const panelPitch = -d.overlayHeadDownDeg * DEG;
+      const flat = Math.cos(panelPitch) * d.overlayHeadDistM;
       this.pos.set(
-        this.anchor.x - s * d.overlayHeadDistM - c * d.overlayHeadLeftM,
-        this.anchor.y - d.overlayHeadDownM,
-        this.anchor.z - c * d.overlayHeadDistM + s * d.overlayHeadLeftM,
+        this.anchor.x - Math.sin(panelYaw) * flat,
+        this.anchor.y + Math.sin(panelPitch) * d.overlayHeadDistM,
+        this.anchor.z - Math.cos(panelYaw) * flat,
       );
     }
     this.mesh.position.copy(this.pos);
-    this.mesh.quaternion.setFromAxisAngle(UP, Math.atan2(head.x - this.pos.x, head.z - this.pos.z));
+    this.mesh.lookAt(head); // +Z (the plane's face) toward the head; no roll
   }
 
   // ─── Drawing ───────────────────────────────────────────────────────────
@@ -231,7 +243,7 @@ export class DebugOverlay implements DebugOverlayLike {
     this.t(h.tracked ? 'TRK  ' : h.seen ? 'lost ' : 'never', h.tracked ? C.ok : h.seen ? C.warn : C.bad);
     this.t(h.flat ? ' FLAT' : ' lift', h.flat ? C.ok : C.dim);
     this.t(h.pinching ? ' PINCH' : ' pinch', h.pinching ? C.warn : C.dim);
-    this.t(`${num(h.pinchDistance * 1000, 0).padStart(4)}mm`, h.pinching ? C.warn : C.dim);
+    this.t(h.seen ? `${num(h.pinchDistance * 1000, 0).padStart(4)}mm` : '  --  ', h.pinching ? C.warn : C.dim);
     const hd = h.heightAboveDesk;
     this.t(' h', C.dim).t(
       Number.isFinite(hd) ? `${hd >= 0 ? '+' : ''}${num(hd * 100)}cm`.padStart(8) : '      --',
@@ -383,7 +395,7 @@ export class DebugOverlay implements DebugOverlayLike {
     this.t(title, C.head).t(String(list.length), list.length ? C.ok : C.warn);
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
-      this.t(i === 0 ? ' ' : ',', C.dim).t(f.source === 'placed' ? 'placed' : `${f.source}:${f.label}`, C.text);
+      this.t(i === 0 ? ' ' : ', ', C.dim).t(f.source === 'placed' ? 'placed' : `${f.source}:${f.label}`, C.text);
     }
   }
 

@@ -31,9 +31,9 @@ function mulberry32(seed: number): Rng {
 }
 
 export interface SoundBuffers {
-  /** 2 s white noise, loopable. */
+  /** 1.5 s white noise, loopable. */
   readonly white: AudioBuffer;
-  /** 4 s pink noise, loopable. */
+  /** 3 s pink noise, loopable. */
   readonly pink: AudioBuffer;
   /** 8 s brown noise at 8 kHz, loopable (room tone, thuds, rumble). */
   readonly brown: AudioBuffer;
@@ -148,14 +148,22 @@ function addThump(
   decayTau: number,
   attackTau: number,
 ): void {
+  // Exponentials as per-sample multipliers (only one sin() per sample).
+  const kg = Math.exp(-1 / (glideTau * sr));
+  const ka = Math.exp(-1 / (attackTau * sr));
+  const kd = Math.exp(-1 / (decayTau * sr));
+  const w = (2 * Math.PI) / sr;
+  let glide = 1;
+  let att = 1;
+  let env = amp;
   let ph = 0;
   const end = Math.min(d.length, start + Math.ceil(decayTau * 9 * sr));
   for (let i = start; i < end; i++) {
-    const t = (i - start) / sr;
-    const f = f1 + (f0 - f1) * Math.exp(-t / glideTau);
-    ph += (2 * Math.PI * f) / sr;
-    const env = amp * (1 - Math.exp(-t / attackTau)) * Math.exp(-t / decayTau);
-    d[i] += Math.sin(ph) * env;
+    ph += w * (f1 + (f0 - f1) * glide);
+    d[i] += Math.sin(ph) * env * (1 - att);
+    glide *= kg;
+    att *= ka;
+    env *= kd;
   }
 }
 
@@ -190,18 +198,18 @@ function fadeOutTail(d: Float32Array, samples: number): void {
 
 function renderWhite(ctx: BaseAudioContext, rng: Rng): AudioBuffer {
   const sr = ctx.sampleRate;
-  const d = new Float32Array(Math.round(2 * sr));
+  const d = new Float32Array(Math.round(1.5 * sr));
   for (let i = 0; i < d.length; i++) d[i] = rng() * 2 - 1;
   return toBuffer(ctx, normalize(d, 0.95), sr);
 }
 
 function renderPink(ctx: BaseAudioContext, rng: Rng): AudioBuffer {
   const sr = ctx.sampleRate;
-  const len = Math.round(4 * sr);
+  const len = Math.round(3 * sr);
   const d = seamless(len, Math.round(0.05 * sr), (o) => {
     // Paul Kellet's refined pink filter, warmed up first.
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    for (let i = -4096; i < o.length; i++) {
+    for (let i = -2048; i < o.length; i++) {
       const w = rng() * 2 - 1;
       b0 = 0.99886 * b0 + w * 0.0555179;
       b1 = 0.99332 * b1 + w * 0.0750759;
@@ -324,8 +332,8 @@ function renderKnock(ctx: BaseAudioContext, rng: Rng, variant: number): AudioBuf
   addResonator(exc, wood, sr, 560 + rng() * 160, 0.035, 0.7);
   addResonator(exc, wood, sr, 1250 + rng() * 300, 0.018, 0.4);
   normalize(wood, 1);
-  addThump(d, sr, 0, 118 + rng() * 12, 64 + rng() * 8, 0.03, 1.0, 0.1, 0.0015);
-  for (let i = 0; i < n; i++) d[i] += wood[i] * 0.65;
+  addThump(d, sr, 0, 118 + rng() * 12, 64 + rng() * 8, 0.03, 0.5, 0.1, 0.0015);
+  for (let i = 0; i < n; i++) d[i] += wood[i] * 1.0;
   addClick(d, sr, 0, 0.6, 0.0008, rng);
   for (let i = 0; i < n; i++) d[i] = Math.tanh(1.5 * d[i]);
   fadeOutTail(d, 0.03 * sr);
@@ -415,10 +423,14 @@ function renderBeat(ctx: BaseAudioContext, f0: number, f1: number, decay: number
   const sr = ctx.sampleRate;
   const d = new Float32Array(Math.round(0.34 * sr));
   addThump(d, sr, 0, f0, f1, 0.045, 1, decay, 0.004);
+  // Chest "body" an octave+ up: the part the Quest's small speakers can play.
+  addThump(d, sr, 0, f0 * 2.4, f1 * 2.4, 0.03, 0.3, decay * 0.6, 0.003);
+  addThump(d, sr, 0, f0 * 3.8, f1 * 3.8, 0.025, 0.22, decay * 0.45, 0.002);
   let lp = 0;
   for (let i = 0; i < d.length; i++) {
-    const v = Math.tanh(2.4 * d[i]);
-    lp += (v - lp) * 0.06; // ~450 Hz one-pole: soft, no click
+    const x = d[i];
+    const v = Math.tanh(2.4 * x + 0.35 * x * x); // asymmetric: adds even harmonics too
+    lp += (v - lp) * 0.1; // ~800 Hz one-pole: soft, no click
     d[i] = lp;
   }
   fadeOutTail(d, 0.03 * sr);

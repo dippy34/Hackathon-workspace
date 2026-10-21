@@ -7,7 +7,8 @@
  * (startOutsideM outside → fullInsideM inside at a full meter). It always
  * stares at the player and tilts its head a little.
  * Lit: it brightens (fake flashlight lighting), flinches, squints and recoils;
- * the taps stop. Leave: it pulls back outside and fades, glassRetreat.
+ * the taps all but stop (their loop is ducked to threatFx.counterDuck).
+ * Leave: it pulls back outside and fades, glassRetreat.
  * Caught: it rushes at the player's head (~0.4 s), mouth open, faceRush on the
  * over-bus.
  *
@@ -60,8 +61,6 @@ type FaceVariant = 'calm' | 'squint' | 'rush';
 const FACE_SCALE_X = 0.1;
 const FACE_SCALE_Y = 0.135;
 const FACE_SCALE_Z = 0.075;
-/** How far in front of the eyes the face stops when it rushes (m). */
-const RUSH_FACE_DIST = 0.17;
 
 /** A pale, too-smooth oval: hollow eyes, almost no nose, a thin mouth. */
 function faceTexture(variant: FaceVariant): CanvasTexture {
@@ -261,8 +260,9 @@ export class PeekerThreat implements ThreatPresenter {
     this.root.visible = true;
 
     this.root.localToWorld(this.voicePos.set(this.lat, this.vert, 0));
-    const input = this.voice.openAt(ctx.audio, this.voicePos, 'game');
-    if (input) this.taps.start(ctx.audio.sounds.glassTaps(input), 0.3);
+    this.voice.openAt(ctx.audio, this.voicePos, 'game');
+    const loopIn = this.voice.loopInput;
+    if (loopIn) this.taps.start(ctx.audio.sounds.glassTaps(loopIn), 0.3);
   }
 
   update(attack: AttackView, _ctx: FrameContext): void {
@@ -331,7 +331,7 @@ export class PeekerThreat implements ThreatPresenter {
   // ─── Per-mode animation ────────────────────────────────────────────────
 
   private tickActive(ctx: FrameContext, dt: number): void {
-    this.fadeIn = Math.min(1, this.fadeIn + dt / 1.4);
+    this.fadeIn = Math.min(1, this.fadeIn + dt / FX.fadeInSec);
     // The meter is the face's progress through the glass.
     this.mSm = damp(this.mSm, this.meter, 2.5, dt);
     const inBeam = ctx.flashlight.on && ctx.flashlight.containsPoint(this.facePos);
@@ -354,8 +354,9 @@ export class PeekerThreat implements ThreatPresenter {
     this.smearAmt = damp(this.smearAmt, 0.13 * crossing + (depth > 0.05 ? 0.03 : 0), 4, dt);
     this.smearMat.opacity = this.smearAmt * this.fadeIn;
 
-    // Tapping follows the meter; it stops while the light is on it.
+    // Tapping follows the meter; it all but stops while the light is on it.
     this.taps.set(lerp(0.3 + 0.7 * this.meter, 0.06, this.flinch));
+    this.voice.setDuck(this.countering ? CONFIG.threatFx.counterDuck : 1, CONFIG.threatFx.counterDuckSec);
   }
 
   private tickLeaving(ctx: FrameContext, dt: number): void {
@@ -379,7 +380,7 @@ export class PeekerThreat implements ThreatPresenter {
     const u = this.modeT / FX.rushSec;
     const t = clamp01(u);
     const e = lerp(t, t * t, 0.6);
-    pointInFrontOfHead(ctx.headPos, ctx.headForward, RUSH_FACE_DIST, 0, this.tmpB);
+    pointInFrontOfHead(ctx.headPos, ctx.headForward, FX.rushFaceDistM, 0, this.tmpB);
     this.root.worldToLocal(this.tmpA.copy(this.tmpB));
     this.tmpA.lerpVectors(this.rushStart, this.tmpA, e);
     const shake = 0.002 + 0.004 * e;

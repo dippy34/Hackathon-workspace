@@ -9,13 +9,6 @@ import { lerp } from './math.js';
 import type { AttackView, Rng } from './types.js';
 
 /**
- * A teaching attack is due no later than `teachingStartWithinSec` minus this
- * margin, so frame/substep granularity can never push its start past the
- * DESIGN.md "starts within 10 s" promise.
- */
-export const TEACHING_START_MARGIN_SEC = 0.5;
-
-/**
  * Interpretation of DESIGN.md "A threat's first appearance in a night is a
  * teaching moment": a threat teaches only on the night it is introduced
  * (`introducedOnNight(id) === night`), and only its FIRST attack that night is
@@ -34,7 +27,7 @@ export function sampleGapSec(id: ThreatId, aggression: number, rng: Rng): number
 /** Night-clock offset of a teaching attack: U[teachingStartEarliestSec, teachingStartWithinSec - margin]. */
 export function sampleTeachingStartSec(rng: Rng): number {
   const s = CONFIG.scheduler;
-  return lerp(s.teachingStartEarliestSec, s.teachingStartWithinSec - TEACHING_START_MARGIN_SEC, rng());
+  return lerp(s.teachingStartEarliestSec, s.teachingStartWithinSec - s.teachingStartMarginSec, rng());
 }
 
 /** First due time of a non-teaching threat: one gap in, but never inside the quiet opening. */

@@ -1,16 +1,50 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#06080b" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Hold Still: a seated, hands-only mixed-reality horror game for Meta Quest 3."
     />
     <link rel="icon" href="data:," />
-    <title>holdstill</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Non-blocking: a slow or unreachable Google Fonts never holds up the first paint (Georgia fallback). -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Special+Elite&display=swap"
+      media="print"
+      onload="this.media = 'all'"
+    />
+    <title>Hold Still</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #06080b;
+        color: #e4dccc;
+      }
+    </style>
   </head>
-  <body style="margin: 0">
+  <body>
     <div id="scene-container"></div>
+    <!-- The title page; src/ui/title.ts replaces this loading placeholder. -->
+    <div id="title-root" class="hs-title">
+      <main class="hs-page">
+        <header class="hs-head">
+          <h1 class="hs-logo">HOLD STILL</h1>
+          <p class="hs-boot-note">Loading…</p>
+        </header>
+      </main>
+    </div>
+    <noscript>Hold Still needs JavaScript and the Meta Quest Browser.</noscript>
     <script type="module" src="/src/index.ts"></script>
   </body>
 </html>

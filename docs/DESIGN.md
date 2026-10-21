@@ -152,11 +152,16 @@ These are the places where the rules above needed an interpretation to be coded.
 - **Danger meter.** It fills at `aggression ÷ caught-after` per second while you're not countering, and drains at `1 ÷ caught-after` per second while you are. "Leaves after" counts **total** countered time during the attack, so it doesn't need to be unbroken.
 - **Teaching moment.** "First appearance in a night" is read as **the first attack on the night the threat is introduced**: Under the Desk on night 1, the Peeker on night 2, the Listener on night 3, the Knocker on night 4. (Read literally for every night, night 5 would need four solo attacks inside 10 s, which can't fit.) That attack starts between 4 and 9.5 s into the night. Nothing else starts before it or while it's active. It repeats when the night restarts.
 - **Teaching hint.** During a teaching attack, a faint 2–3 word scrawl appears near the threat for 5 s ("Hands flat.", "Pinch. Light it.", "Palm out. Hold it.", "Shh. Not a sound."). It's the only text during nights besides the battery glow. Set `flow.teachingHintSec` to 0 to turn it off.
-- **Fairness with two or more hand threats active** (night 5). A new hands-threat must have a "caught after" (divided by aggression) longer than the **sum**, over every active hands-threat, of its remaining "leaves after" plus 1.5 s. With one active threat this is exactly the rule above.
+- **Fairness, in full.** A new hands-threat may start only if its "caught after" (divided by aggression) is longer than a "hands busy" budget. The budget is:
+  - the **sum**, over every active hands-threat, of its remaining "leaves after" plus 1.5 s;
+  - plus another 1.5 s if the player isn't countering any of them yet (they still have to react to the first one);
+  - and never less than 1.5 s minus the time since the last hands-threat left (a hand may still be on its way back).
+
+  With one active hands-threat that's being countered, this is exactly the rule above. The extra parts only make it stricter, so an attack that DESIGN.md allows can wait a little longer, but nothing it forbids can start. A simulated player that needs about 1 s to react and 1.4 s to move a hand survives every night in testing.
 - **"Caught after" and aggression.** The fairness check uses `caught after ÷ aggression`, because aggression makes the meter fill faster.
 - **Max attacks at once.** The Listener counts toward the limit of 2 (or 3 on night 5).
 - **Night clock.** No new attack starts in the first 6 s or the last 4 s of a night, except the teaching attack. When the clock hits 2:00 you've survived, and any attacks still active simply end.
-- **Caught.** The caught moment plays for about 0.9 s, then the screen cuts to black. The night restarts 3 s after being caught, with a shorter 3 s lead-in.
+- **Caught.** The caught moment plays for about 0.9 s, then the screen cuts to black and shows "Night N. Again." The night clock restarts 3 s after the catch (1.8 s caught + black, then a 1.2 s lead-in).
 - **No mic.** The Listener is removed from the schedule. Night 3 still runs with Under the Desk and the Peeker.
 - **Every warning has a sound and a visual,** so a threat that starts during the Listener's silence can still be seen.
 
@@ -170,6 +175,7 @@ These are the places where the rules above needed an interpretation to be coded.
 | `hands.pinchStartM` / `pinchEndM` | 2 cm / 4 cm | Pinch on / off (hysteresis) |
 | `mic.baselineFloorRms` | 0.004 | Very quiet rooms never get a hair-trigger threshold |
 | `mic.levelSmoothingSec` | 0.05 s | Mic level smoothing |
+| `threatFx.listener.onsetGraceSec` | 0.25 s | After the game audio cuts out (`audio.listenerCutSec`, 0.12 s), the Listener ignores the mic this much longer, so the game's own fading sound never counts as noise |
 | `flashlight.beamHalfAngleDeg` | 14° | Beam cone that counts as "on the face" |
 | `flashlight.beamRangeM` | 9 m | Beam reach |
 | `intro.holdSec` | 3 s | Hands flat and still this long to calibrate |
@@ -178,5 +184,9 @@ These are the places where the rules above needed an interpretation to be coded.
 | `scheduler.gapJitterMin` / `Max` | 0.5× / 1.5× | Random spread around each average gap |
 | `scheduler.quietOpeningSec` / `quietClosingSec` | 6 s / 4 s | No new attacks right at the start or end of a night |
 | `darkness.fadeInSec` / `nightOpacity` | 6 s / 0.94 | Lights going out |
-| `flow.nightIntroSec` / `restartIntroSec` / `nightClearedSec` | 6 s / 3 s / 6 s | Transitions |
+| `flow.nightIntroSec` / `nightClearedSec` | 6 s / 6 s | Transitions |
 | `caught.cutToBlackSec` | 0.9 s | Caught moment before the cut to black |
+| `caught.pauseSec` + `flow.restartIntroSec` | 1.8 s + 1.2 s | "About a 3-second pause" before the night restarts |
+| `meterDrainMultiplier` | 1.0 | Meter drains as fast as it fills (at 1.0×) |
+| `scheduler.teachingStartEarliestSec` | 4 s | Earliest a teaching attack starts (darkness settles first) |
+| `maxFrameSec` | 0.1 s | A frame hitch slows game time instead of skipping ahead |

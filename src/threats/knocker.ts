@@ -8,7 +8,8 @@
  * faint wedge of that light on the floor. Near a full meter something stands
  * in the gap: the light is blocked by a shape, and two eyes catch.
  * Palm out: the sliver trembles and narrows (the door is pushed back), the
- * knocking falls away. Leave: the light closes, doorRetreat.
+ * knocking falls away (its loops are ducked to threatFx.counterDuck).
+ * Leave: the light closes, doorRetreat.
  * Caught: the door bursts open: light floods out and a thin dark figure
  * rushes at the player, doorBurst on the over-bus.
  *
@@ -63,8 +64,6 @@ const RUSH_FIGURE_W = 0.62;
 const RUSH_FIGURE_H = 1.95;
 /** Figure's eyes above its centre (m). */
 const RUSH_EYE_Y = 0.8;
-/** The figure stops this far in front of the eyes (m). */
-const RUSH_FACE_DIST = 0.25;
 
 /** Soft vertical strip of light: bright core, soft sides, fading ends. */
 function sliverTexture(): CanvasTexture {
@@ -297,10 +296,11 @@ export class KnockerThreat implements ThreatPresenter {
     this.root.visible = true;
 
     this.root.localToWorld(this.voicePos.set(this.edgeX * 0.6, this.floorY + FX.voiceHeightM, 0.05));
-    const input = this.voice.openAt(ctx.audio, this.voicePos, 'game');
-    if (input) {
-      this.knocks.start(ctx.audio.sounds.doorKnocks(input), 0.2);
-      this.creak.start(ctx.audio.sounds.doorCreak(input), 0);
+    this.voice.openAt(ctx.audio, this.voicePos, 'game');
+    const loopIn = this.voice.loopInput;
+    if (loopIn) {
+      this.knocks.start(ctx.audio.sounds.doorKnocks(loopIn), 0.2);
+      this.creak.start(ctx.audio.sounds.doorCreak(loopIn), 0);
     }
   }
 
@@ -386,7 +386,7 @@ export class KnockerThreat implements ThreatPresenter {
 
   private tickActive(ctx: FrameContext, dt: number): void {
     const t = this.time;
-    this.fadeIn = Math.min(1, this.fadeIn + dt / 0.8);
+    this.fadeIn = Math.min(1, this.fadeIn + dt / FX.fadeInSec);
     this.mSm = damp(this.mSm, this.meter, 5, dt);
     this.push = damp(this.push, this.countering ? 1 : 0, 8, dt);
     const m = this.mSm;
@@ -412,6 +412,7 @@ export class KnockerThreat implements ThreatPresenter {
     const urgency = clamp01(0.2 + 0.8 * this.meter + Math.min(0.25, this.ageSec * 0.12));
     this.knocks.set(lerp(urgency, 0.1, push));
     this.creak.set(this.meter * lerp(1, 0.55, push));
+    this.voice.setDuck(this.countering ? CONFIG.threatFx.counterDuck : 1, CONFIG.threatFx.counterDuckSec);
   }
 
   private tickLeaving(ctx: FrameContext, dt: number): void {
@@ -433,7 +434,7 @@ export class KnockerThreat implements ThreatPresenter {
     const t = this.modeT;
 
     // The door is flung open: the gap becomes the whole doorway, light floods out.
-    const o = easeOutCubic(clamp01(t / 0.12));
+    const o = easeOutCubic(clamp01(t / FX.burstOpenSec));
     this.layoutGap(lerp(this.startW, this.doorW, o));
     this.sliverMat.opacity = 1;
     this.flash.position.set(0, -0.005, LIGHT_Z - 0.01);
@@ -445,7 +446,7 @@ export class KnockerThreat implements ThreatPresenter {
     // Something thin and dark comes out of the light, straight at the player.
     const u = clamp01((t - 0.06) / FX.rushSec);
     const e = u * u;
-    pointInFrontOfHead(ctx.headPos, ctx.headForward, RUSH_FACE_DIST, -RUSH_EYE_Y, this.tmpB);
+    pointInFrontOfHead(ctx.headPos, ctx.headForward, FX.rushFaceDistM, -RUSH_EYE_Y, this.tmpB);
     this.root.worldToLocal(this.tmpA.copy(this.tmpB));
     this.figure.position.lerpVectors(this.rushStart, this.tmpA, e);
     this.root.localToWorld(this.tmpA.copy(this.figure.position));
@@ -470,10 +471,11 @@ export class KnockerThreat implements ThreatPresenter {
     if (door) {
       this.doorW = Number.isFinite(door.width) ? clamp(door.width, 0.6, 1.3) : 0.85;
       this.doorH = Number.isFinite(door.height) ? clamp(door.height, 1.75, 2.4) : 2.0;
-      // local-floor: the floor is y = 0. Trust the feature's centre unless its bottom is clearly off the floor.
+      // local-floor: the floor is y = 0. A detected door frame's bottom sits on it; a hand-placed door's
+      // centre is wherever the player pinched, so stand that door on the floor instead.
       let cy = door.position.y;
       const bottom = cy - this.doorH / 2;
-      if (bottom < -0.3 || bottom > 0.35) cy = this.doorH / 2;
+      if (door.source === 'placed' || bottom < -0.15 || bottom > 0.15) cy = this.doorH / 2;
       this.root.position.set(door.position.x, cy, door.position.z);
       orientToForward(this.root, door.normal);
       this.doorTarget.copy(door.position);

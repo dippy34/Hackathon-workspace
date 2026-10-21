@@ -1,6 +1,10 @@
-import { outlineMaterial, type World } from '@iwsdk/core';
+import { LinearSRGBColorSpace, outlineMaterial, type World } from '@iwsdk/core';
 
-/** Faint pale bone: the hands read as a ghostly rim against the dark. */
+/**
+ * Faint pale bone: the hands read as a ghostly rim against the dark. Display
+ * (sRGB) value: IWSDK's outline shader writes the uniform straight to the
+ * framebuffer (no <colorspace_fragment>), so it is stored unconverted.
+ */
 const HAND_OUTLINE = 0xcfc6b8;
 
 /**
@@ -18,7 +22,7 @@ const HAND_OUTLINE = 0xcfc6b8;
  */
 export function styleHands(world: World): void {
   const apply = (): void => {
-    outlineMaterial?.uniforms?.outlineColor?.value?.set?.(HAND_OUTLINE);
+    outlineMaterial?.uniforms?.outlineColor?.value?.setHex?.(HAND_OUTLINE, LinearSRGBColorSpace);
     const pointers = world.input?.xr?.multiPointers;
     pointers?.left?.toggleSubPointer?.('ray', false);
     pointers?.right?.toggleSubPointer?.('ray', false);

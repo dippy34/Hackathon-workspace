@@ -151,7 +151,7 @@ export class Director {
 
   frame(frame: XRFrame | null, refSpace: XRReferenceSpace | null, dt: number, time: number): void {
     if (!frame || !refSpace) return;
-    dt = Math.min(dt, 0.1);
+    dt = Math.min(dt, CONFIG.maxFrameSec);
     this.fps += (1 / Math.max(dt, 1e-3) - this.fps) * 0.05;
 
     const ctx = this.ctx;
@@ -230,6 +230,11 @@ export class Director {
 
   private onSessionEnd(): void {
     this.resetPresentation();
+    // Our AudioEngine keeps running on the 2D title page: silence the night (nightIntro recreates both on resume).
+    this.ambience?.stop(0.3);
+    this.ambience = null;
+    this.heartbeat?.stop(0.3);
+    this.heartbeat = null;
     this.flashlight.setAllowed(false);
     this.darkness.fadeTo(0, 0.01);
     this.text.hide(0);
@@ -255,12 +260,10 @@ export class Director {
         this.updateDisabled(night);
         this.darkness.fadeTo(CONFIG.darkness.nightOpacity, restart ? CONFIG.flow.restartIntroSec : CONFIG.darkness.fadeInSec);
         if (!restart) this.audio.sounds.oneShot('lightsOut', this.audio.gameBus);
-        this.text.show(`Night ${night}`, {
-          mode: 'gaze',
-          size: 0.09,
-          durationSec: (restart ? CONFIG.flow.restartIntroSec : CONFIG.flow.nightIntroSec) - 0.5,
-          subtitle: restart ? 'Again.' : undefined,
-        });
+        // (After a catch, "Night N / Again." is already showing from the cut to black.)
+        if (!restart) {
+          this.text.show(`Night ${night}`, { mode: 'gaze', size: 0.09, durationSec: CONFIG.flow.nightIntroSec - 0.5 });
+        }
         this.ambience ??= this.audio.sounds.ambience(this.audio.gameBus);
         this.heartbeat ??= this.audio.sounds.heartbeat(this.audio.gameBus);
         this.heartbeat.setIntensity(0);
@@ -322,6 +325,8 @@ export class Director {
       if (this.flow.phase === 'caught' && this.flow.night === night) {
         this.darkness.fadeTo(1, 0.06);
         this.threats[a.id].reset();
+        const untilClock = CONFIG.caught.pauseSec - CONFIG.caught.cutToBlackSec + CONFIG.flow.restartIntroSec;
+        this.text.show(`Night ${night}`, { mode: 'gaze', size: 0.09, subtitle: 'Again.', fadeInSec: 0.15, durationSec: untilClock - 0.2 });
       }
     }, CONFIG.caught.cutToBlackSec * 1000);
   }

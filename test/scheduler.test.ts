@@ -10,7 +10,7 @@ import { MAX_FRAME_SEC, NightRunner } from '../src/core/night-runner.js';
 import { mulberry32 } from '../src/core/rng.js';
 import { handsBusySec, passesFairness } from '../src/core/scheduler.js';
 import type { AttackView } from '../src/core/types.js';
-import { EPS, SIM_DT, effectiveCaughtAfterSec } from './sim/player.js';
+import { SIM_DT, effectiveCaughtAfterSec } from './sim/player.js';
 
 const R = CONFIG.scheduler.reactionSec;
 const T = CONFIG.threats;
@@ -160,17 +160,17 @@ describe('NightRunner frame handling', () => {
       onSurvived: () => fired++,
     });
     // Step until the first attack is due within one substep, then take a full-length frame.
-    while (fired === 0) {
+    for (let i = 0; fired === 0 && i < 72 * 60; i++) {
       const due = Math.min(...nightTuning(5).threats.map((id) => runner.nextAttackInSec(id) ?? Infinity));
       if (due > 0 && due < 1 / 60) runner.update(MAX_FRAME_SEC, () => false);
       else runner.update(SIM_DT, () => false);
     }
     expect(fired).toBe(1);
+    expect(atDispose).toBeGreaterThan(0);
     expect(runner.elapsedSec).toBeCloseTo(atDispose, 12); // no further substeps ran
     for (let i = 0; i < 200; i++) runner.update(MAX_FRAME_SEC, () => false);
     expect(fired).toBe(1);
     expect(runner.elapsedSec).toBeCloseTo(atDispose, 12);
     expect(runner.state).toBe('running');
-    expect(Math.abs(runner.elapsedSec - atDispose)).toBeLessThan(EPS);
   });
 });

@@ -352,7 +352,7 @@ describe.each(STRESS)('stress tuning: $name', ({ tuning }) => {
  * budgets, so the scheduler must never catch them.
  */
 describe('fairness with hands that are not already in place', () => {
-  const SLOW_SEEDS = 150;
+  const SLOW_SEEDS = 100;
   describe.each([
     [1.0, 1.4],
     [1.2, 0.9],

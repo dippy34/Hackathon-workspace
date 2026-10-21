@@ -3,8 +3,8 @@
  *
  * The game-design numbers mirror docs/DESIGN.md (the source of truth). If you
  * change a value after a playtest, update DESIGN.md in the same commit.
- * Values marked "impl" are implementation tuning that DESIGN.md lists in its
- * "Implementation tuning" table.
+ * Values marked "impl" are implementation tuning; the ones that change how
+ * the game plays are listed in DESIGN.md's "Implementation tuning" table.
  */
 
 export type ThreatId = 'underDesk' | 'listener' | 'peeker' | 'knocker';
@@ -87,6 +87,8 @@ export const CONFIG = {
     teachingStartWithinSec: 10,
     /** impl: earliest the teaching attack may start (lets the darkness settle first). */
     teachingStartEarliestSec: 4,
+    /** impl: the teaching attack is due this long before teachingStartWithinSec at the latest. */
+    teachingStartMarginSec: 0.5,
     /** impl: no new attack (other than teaching) starts in the first N seconds of a night. */
     quietOpeningSec: 6,
     /** impl: no new attack starts in the last N seconds of a night. */
@@ -96,10 +98,16 @@ export const CONFIG = {
   /** impl: meter drain speed while countering, as a multiple of its fill speed at 1.0x. */
   meterDrainMultiplier: 1.0,
 
+  /** impl: longest frame (s) the game simulates; a longer hitch slows game time instead of skipping ahead. */
+  maxFrameSec: 0.1,
+
   // ─── Caught (DESIGN.md core rule 5) ───────────────────────────────────────
   caught: {
-    /** Total time from being caught until the night restarts (the caught moment plays inside it). */
-    pauseSec: 3,
+    /**
+     * Caught -> restart: the caught moment and the black screen. Together with
+     * flow.restartIntroSec this is DESIGN.md's "about a 3-second pause".
+     */
+    pauseSec: 1.8,
     /** impl: seconds of caught moment before the screen cuts to black (inside pauseSec). */
     cutToBlackSec: 0.9,
   },
@@ -158,10 +166,8 @@ export const CONFIG = {
     lowBatteryFraction: 0.2,
     /** impl: smoothing time constant (s) of the beam's aim (kills hand-tracking jitter). */
     smoothingSec: 0.04,
-    /** impl: half-angle of the visible beam and the SpotLight, as a multiple of beamHalfAngleDeg (soft edges). */
+    /** impl: half-angle of the visible beam, as a multiple of beamHalfAngleDeg (soft edges). */
     visualAngleScale: 1.5,
-    /** impl: SpotLight intensity (candela, decay 2) at full battery. */
-    lightIntensity: 12,
     /** impl: brightness of the visible (volumetric) beam at full battery. */
     beamGlow: 0.6,
     /** impl: how much the beam dims as the battery runs from lowBatteryFraction to empty (0..1). */
@@ -227,8 +233,8 @@ export const CONFIG = {
   flow: {
     /** impl: "Night N" card + darkness fade before the night clock starts. */
     nightIntroSec: 6,
-    /** impl: shorter "Night N" lead-in when a night restarts after being caught. */
-    restartIntroSec: 3,
+    /** impl: lead-in when a night restarts after being caught (pauseSec + this = about 3 s). */
+    restartIntroSec: 1.2,
     /** impl: pause after surviving a night before the next one starts. */
     nightClearedSec: 6,
     /** impl: how long a teaching hint stays scrawled near a threat's first attack. */
@@ -266,7 +272,7 @@ export const CONFIG = {
     /** impl: loudness of each procedural loop before spatialisation (balance the mix here). */
     loopLevels: {
       ambience: 0.6,
-      scratching: 0.55,
+      scratching: 1.0,
       glassTaps: 1.0,
       doorKnocks: 1.0,
       doorCreak: 0.8,
@@ -296,6 +302,10 @@ export const CONFIG = {
   threatFx: {
     /** impl: seconds a threat's spatial voice lingers after it leaves, so its retreat sound can finish. */
     voiceLingerSec: 3,
+    /** impl: while countered, a threat's own warning loop (scratching, taps, knocks/creak) drops to this gain. */
+    counterDuck: 0.15,
+    /** impl: time constant (s) of that duck, both ways (about 3x this to settle). */
+    counterDuckSec: 0.08,
     underDesk: {
       /** impl: the scratching comes from this far below the desk centre (m)... */
       voiceBelowDeskM: 0.45,
@@ -309,6 +319,10 @@ export const CONFIG = {
       withdrawSec: 0.9,
       /** impl: seconds for the caught hand to lunge from under the desk to the face. */
       lungeSec: 0.35,
+      /** impl: the caught hand stops this far in front of the eyes (m; comfort). */
+      lungeFaceDistM: 0.15,
+      /** impl: seconds for the eyes under the desk to fade in when it arrives. */
+      eyeFadeInSec: 1.2,
       /** impl: gain of the caught 'grab' one-shot. */
       grabGain: 1.2,
     },
@@ -324,8 +338,12 @@ export const CONFIG = {
       litBrightness: 1.0,
       /** impl: seconds for the face to pull back outside and fade when it leaves. */
       retreatSec: 1.1,
+      /** impl: seconds for the face to fade in outside the window when it arrives. */
+      fadeInSec: 1.4,
       /** impl: seconds for the face to rush at the player's head when caught. */
       rushSec: 0.4,
+      /** impl: the rushing face stops this far in front of the eyes (m; comfort). */
+      rushFaceDistM: 0.17,
       /** impl: gain of the caught 'faceRush' one-shot. */
       faceRushGain: 1.2,
     },
@@ -339,8 +357,14 @@ export const CONFIG = {
       pushBackNarrow: 0.35,
       /** impl: seconds for the light to close when it leaves. */
       closeSec: 0.7,
+      /** impl: seconds for the light sliver to fade in when it arrives. */
+      fadeInSec: 0.8,
+      /** impl: seconds for the door to fling fully open when caught. */
+      burstOpenSec: 0.12,
       /** impl: seconds for the silhouette to rush from the burst door to the player when caught. */
       rushSec: 0.55,
+      /** impl: the rushing figure stops this far in front of the eyes (m; comfort). */
+      rushFaceDistM: 0.25,
       /** impl: gain of the caught 'doorBurst' one-shot. */
       doorBurstGain: 1.2,
     },
@@ -349,6 +373,14 @@ export const CONFIG = {
       screamOffsetM: 0.12,
       /** impl: gain of the caught 'scream' one-shot ("right next to the ear"). */
       screamGain: 1.6,
+      /** impl: seconds the caught scream keeps following the ear before its voice is released. */
+      screamFollowSec: 3,
+      /**
+       * impl: after the game audio has cut out (audio.listenerCutSec), the mic is still ignored this
+       * long, so the game's own fading sound (speaker leak, output latency, mic smoothing) never
+       * counts as the player making noise.
+       */
+      onsetGraceSec: 0.25,
       /** impl: ringing intensity at an empty / full meter (it rises only very slightly). */
       ringingMin: 0.35,
       ringingMax: 0.55,
@@ -365,16 +397,20 @@ export const CONFIG = {
     overlayDefault: true,
     /** impl: overlay redraws per second. */
     overlayHz: 6,
-    /** impl: overlay panel width (m). */
-    overlayWidthM: 0.55,
-    /** impl: with a desk: panel centre this far above the desk centre (m)... */
-    overlayAboveDeskM: 0.45,
-    /** impl: ...and this far beyond it, away from the player (m). */
-    overlayBeyondDeskM: 0.25,
-    /** impl: without a desk: panel this far in front of the head (m), offset left and down. */
-    overlayHeadDistM: 0.9,
-    overlayHeadLeftM: 0.32,
-    overlayHeadDownM: 0.1,
+    /** impl: overlay panel width (m; it is square). */
+    overlayWidthM: 0.46,
+    /** impl: opacity of the panel's dark background (0..1). */
+    overlayBgOpacity: 0.72,
+    /** impl: with a desk the panel stands off to the player's left, clear of the hands and the view ahead: centre this far left of the desk centre (m)... */
+    overlayDeskLeftM: 0.5,
+    /** impl: ...this far beyond it, away from the player (m)... */
+    overlayBeyondDeskM: 0.05,
+    /** impl: ...and this far above the desk height (m); it tilts back to face the head. */
+    overlayAboveDeskM: 0.24,
+    /** impl: without a desk: panel this far from the head (m), off to the left and down of where the player looks (deg). */
+    overlayHeadDistM: 0.85,
+    overlayHeadLeftDeg: 38,
+    overlayHeadDownDeg: 12,
     /** impl: mic/baseline ratio while game audio plays at or above which the overlay says "mic hears game: YES". */
     micLeakRatio: 2,
   },

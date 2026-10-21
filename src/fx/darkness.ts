@@ -18,6 +18,10 @@ const DIPS = [
 const BREATH_A = (2 * Math.PI) / 6.3;
 const BREATH_B = (2 * Math.PI) / 2.9;
 const HIDDEN_BELOW = 0.002;
+/** At or above this opacity the shell is solid black: no tint, grain or breathing lets passthrough through. */
+const FULL_BLACK = 0.999;
+/** fadeTo() durations at or below this (s) apply at once (update() may never run again, e.g. at session end). */
+const INSTANT_SEC = 0.02;
 
 const VERT = /* glsl */ `
 varying vec3 vDir;
@@ -44,12 +48,13 @@ void main() {
   vec3 d = normalize(vDir);
   float up = smoothstep(-0.2, 1.0, d.y);
   vec3 col = mix(uColorLow, uColorTop, up);
-  float a = uOpacity * mix(0.975, 1.03, up);
+  // A touch denser overhead only: at and below eye level the opacity is exactly uOpacity.
+  float a = min(1.0, uOpacity * (1.0 + 0.03 * smoothstep(0.0, 1.0, d.y)));
   // Film grain hashed on the view direction (both eyes agree, so it never shimmers
   // in stereo), re-rolled ~24 times a second like film.
   float frame = mod(floor(uTime * 24.0), 61.0);
   float g = hash13(floor(d * 700.0) + frame * 7.13) - 0.5;
-  a = clamp(a + g * uGrain * uOpacity, 0.0, 1.0);
+  a = uOpacity >= ${FULL_BLACK.toFixed(3)} ? 1.0 : clamp(a + g * uGrain * uOpacity, 0.0, 1.0);
   col = max(col + g * uGrain * 0.15, 0.0);
   gl_FragColor = vec4(col, a);
   #include <colorspace_fragment>
@@ -104,6 +109,7 @@ export class Darkness implements DarknessLike {
     return this.current;
   }
 
+  /** `sec` <= 0.02 (e.g. 0) is instant and applies right away, without waiting for update(). */
   fadeTo(opacity: number, sec: number): void {
     const to = Math.min(1, Math.max(0, opacity));
     this.from = this.current;
@@ -112,7 +118,7 @@ export class Darkness implements DarknessLike {
     this.elapsedSec = 0;
     this.flicker = to - this.current >= FLICKER_MIN_DELTA && sec >= FLICKER_MIN_SEC;
     // Near-instant fades apply now: update() may not run again (e.g. after the session ends).
-    if (this.durSec < 1 / 120) {
+    if (this.durSec <= INSTANT_SEC) {
       this.durSec = 0;
       this.current = to;
       this.breath = 0;
@@ -136,11 +142,14 @@ export class Darkness implements DarknessLike {
       shown = this.current;
     }
 
-    // Barely-there breathing once the room has settled into full dark.
+    // Barely-there breathing (around the target, so the average stays put) once the
+    // room has settled into night dark. Never on a cut to black.
     this.breath += ((fading ? 0 : 1) - this.breath) * (1 - Math.exp(-dt / 1.5));
-    const dark = smooth01((shown - 0.6) / 0.3);
-    const wave = 0.7 * Math.sin(this.time * BREATH_A) + 0.3 * Math.sin(this.time * BREATH_B + 1.7);
-    shown *= 1 + CONFIG.darkness.breathAmplitude * this.breath * dark * wave;
+    if (this.to < FULL_BLACK) {
+      const dark = smooth01((shown - 0.6) / 0.3);
+      const wave = 0.7 * Math.sin(this.time * BREATH_A) + 0.3 * Math.sin(this.time * BREATH_B + 1.7);
+      shown *= 1 + CONFIG.darkness.breathAmplitude * this.breath * dark * wave;
+    }
 
     this.apply(shown);
   }
