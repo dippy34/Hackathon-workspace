@@ -1,0 +1,62 @@
+# Auto-deploy: every push builds the game into site/ and commits it back to the
+# same branch. The HTTPS link serves site/ straight from GitHub via githack:
+#   https://raw.githack.com/<owner>/<repo>/<branch>/site/index.html
+# Optional: once GitHub Pages is enabled (Settings -> Pages -> Source: GitHub
+# Actions) and the repo variable PAGES_ENABLED=true is set, pushes to main also
+# publish to https://<owner>.github.io/<repo>/.
+name: Deploy
+
+on:
+  push:
+    branches: ['**']
+    paths-ignore: ['site/**']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:site
+      - name: Commit site/ if it changed
+        run: |
+          if [ -n "$(git status --porcelain -- site)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A site
+            git commit -m "Deploy site for ${GITHUB_SHA::7}"
+            git push
+          else
+            echo "site/ already up to date"
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main' && vars.PAGES_ENABLED == 'true'
+        with:
+          path: site
+
+  pages:
+    needs: site
+    if: github.ref == 'refs/heads/main' && vars.PAGES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
