@@ -14,7 +14,7 @@ You sit at your real desk wearing a Quest 3. The headset shows your actual room,
 2. **You have no weapons.** You survive by **doing the right thing with your body.**
 3. **Each threat has exactly one counter**, and the game teaches it once.
 4. **The threats fight over your hands.** That's where the tension comes from.
-5. **Getting caught costs one night, not the whole game.**
+5. **Getting caught costs one night, not the whole game.** After about a 3-second pause, that night restarts.
 
 ---
 
@@ -32,6 +32,7 @@ The numbers below are starting values. Tune them in playtests.
 |---|---|
 | **Warning** | Scratching under the desk, from below the player |
 | **Counter** | **Both hands flat on the desk** |
+| **Counts as "flat"** | Palm within ~5 cm of the desk height measured in the intro, and facing down |
 | **Caught after** | 1.5 s of not countering (enough time to slam your hands down) |
 | **Leaves after** | 6 s of countering |
 | **Average gap between attacks** | 25 s |
@@ -128,10 +129,10 @@ After night 5 the room lights back up to normal passthrough and a single line re
 
 ## Look and sound
 
-- **The dark room:** passthrough dims to nearly black at night start, slowly enough that it feels like the lights going out. A stretch goal is to have the flashlight beam reveal the *real* room through the darkness.
+- **The dark room:** your real room fades to nearly black at night start, slowly enough that it feels like the lights going out. A stretch goal is to have the flashlight beam reveal the *real* room through the darkness.
 - **The monsters stay mostly unseen:** eyes, fingers, a hand, a silhouette. That's scarier, and it needs far fewer 3D models.
 - **The sound matters most.** Use positional audio, so scratching comes from *below* and knocking from the *door's real position*. Real recordings beat stock sounds.
-- **No on-screen interface** during nights, except a small battery glow on the flashlight.
+- **No on-screen interface** during nights, except a small battery glow on the flashlight. The debug overlay in `BUILD_SPEC.md` is for development only.
 
 ---
 
@@ -140,4 +141,4 @@ After night 5 the room lights back up to normal passthrough and a single line re
 - Seated play with no movement, so nobody gets motion sick.
 - A jumpscare warning on the title screen.
 - **If the player denies microphone permission,** the Listener is turned off and the title screen says so.
-- **If the room has no windows or door marked,** the intro asks the player to point at a wall and pinch to place them.
+- **If the game can't find a window or door in the room,** the intro asks the player to point at a wall and pinch to place them.

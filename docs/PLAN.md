@@ -2,11 +2,14 @@
 
 **Pitch:** *A horror game where your body is the controller and your room is the map. No weapons. Just hold still.*
 
+**Platform:** a **web app** (WebXR) that runs in the Quest Browser on a **Quest 3 / 3S**. Claude Code builds it in the cloud and you test it by opening a link in the headset, so no laptop is needed.
+
 | Doc | What's in it | Who it's for |
 |---|---|---|
 | **PLAN.md** (this file) | Schedule, to-do lists, assets, trailer, submission | You |
-| [DESIGN.md](DESIGN.md) | The game itself: threats, rules, nights, sound | You + the coding agent |
-| [BUILD_SPEC.md](BUILD_SPEC.md) | How to build it, milestones, prompts to paste | The coding agent |
+| [DESIGN.md](DESIGN.md) | The game itself: threats, rules, nights, sound | You + Claude Code |
+| [BUILD_SPEC.md](BUILD_SPEC.md) | How to build it, milestones, locked vs. open for creativity | Claude Code |
+| [PROMPTS.md](PROMPTS.md) | The exact prompts to paste into Claude Code | You |
 
 **Competition:** Meta VR Start Developer Competition 2026, **Gaming** track (top prize $100K).
 Also eligible for special awards: **Best Passthrough** ($25K) and **10-Minute Challenge** ($20K). Each entry can win only one prize.
@@ -17,7 +20,7 @@ Also eligible for special awards: **Best Passthrough** ($25K) and **10-Minute Ch
 
 | Date | What |
 |---|---|
-| **Now → laptop back** | Week 0: setup you can do from your phone and headset |
+| **Now → Oct 25** | Week 0: the setup list below, then paste the kickoff prompt |
 | Nov 1 | M1: foundation working on the headset |
 | Nov 5 | M2: the core loop (Under the Desk + Listener) |
 | Nov 8 | M3: Peeker, nights 1–3 |
@@ -35,7 +38,7 @@ Also eligible for special awards: **Best Passthrough** ($25K) and **10-Minute Ch
 - [ ] **Check which Quest you have.** You need a **Quest 3 or 3S**, because the Quest 2's passthrough is black and white.
 - [ ] **Join the Meta VR Start program.** You can't submit without it.
 - [ ] **Register** on the Devpost competition page, and **read the official rules** there.
-- [ ] **Turn on Developer Mode** for your headset in the Meta Horizon phone app. You'll have to create a free developer organization.
+- [ ] **⚠️ Confirm a web (WebXR) entry is allowed, and how it's submitted** (a link, or a packaged app?). Meta's 2026 tools include a Web SDK, so it very likely is, but nobody has checked the official rules yet. If it's not allowed, stop and rethink before building.
 - [ ] **In the headset, run Space Setup** in your test room, and make sure your **windows, door and desk** are marked.
 - [ ] **Record sounds on your phone:** scratching under your desk, knocking on your door, tapping on your window, slow breathing. Real recordings are scarier than stock ones.
 - [ ] **Bookmark free assets** (see below).
@@ -43,13 +46,12 @@ Also eligible for special awards: **Best Passthrough** ($25K) and **10-Minute Ch
 
 ---
 
-## How to work with the coding agent
+## How to work with Claude Code
 
-1. Give it `DESIGN.md` and `BUILD_SPEC.md`.
-2. Paste the **prompts at the bottom of `BUILD_SPEC.md`**, one milestone at a time.
-3. **After each milestone, put on the headset and check the "done when" line.** If it fails, don't move on.
-4. Describe bugs exactly: what you did, what you expected, what happened. Include the log if you have it.
-5. If you fall behind, cut features in the order listed below. Don't skip the testing.
+1. Open Claude Code on this repo and paste the **kickoff prompt from [`PROMPTS.md`](PROMPTS.md)**.
+2. When it reports back, **open its link in the Quest Browser and check the milestone's "done when" line** in `BUILD_SPEC.md`. If it fails, use the "something's broken" prompt; don't move on.
+3. When it passes, paste the "next milestone" prompt with your notes.
+4. If you fall behind, cut features in the order listed below. Don't skip the testing.
 
 ### If you fall behind, cut in this order
 1. Stretch threats (the Watcher, the Crawler)
@@ -67,7 +69,7 @@ Monsters stay mostly **unseen** (eyes, fingers, a hand), so you need very few mo
 
 | Need | Where |
 |---|---|
-| Creature models + animations | Mixamo (free with an Adobe account), Unity Asset Store free horror packs, Sketchfab (filter: downloadable + Creative Commons) |
+| Creature models + animations | Mixamo (free with an Adobe account; Claude Code can convert its files for the web), Poly Pizza and Quaternius (free low-poly), Sketchfab (filter: downloadable + Creative Commons) |
 | Sound effects | freesound.org (filter CC0), Sonniss free game audio bundles, **your own recordings** |
 | Fonts | Google Fonts |
 
@@ -95,7 +97,7 @@ Record the headset view with the Quest's built-in recorder. Film a player from o
 ## Devpost submission checklist (Nov 16)
 
 - [ ] Trailer link (YouTube or Vimeo, public, under 3 min)
-- [ ] Build uploaded the way the official rules say
+- [ ] The web app submitted the way the official rules say (a link or a package, whichever they require)
 - [ ] Description: pitch, the four threats, which Quest features each uses
 - [ ] Screenshots: window face, hands on desk, dark room
 - [ ] Track: **Gaming**; mention passthrough and the 10-minute length
@@ -123,8 +125,8 @@ These criteria come from an unofficial copy of the rules. Confirm on Devpost.
 |---|---|
 | The mic hears the game's own sounds | All game audio cuts out during the Listener (that's also its warning). Test in M1. |
 | A hand leaves camera view when you look at a window | The game keeps that hand's last state instead of counting it as lifted |
-| Quest Link doesn't work on Mac | Build and Run over USB for every test, so budget the extra minutes |
-| The player hasn't marked windows or a door | The intro lets them point and pinch to place them |
+| The competition might not accept web entries | Check the official rules in Week 0, **before** building |
+| The Quest Browser might not say which surfaces are windows and doors | The intro lets the player point and pinch to place them, so the game works either way |
 | The flashlight-reveal effect is too hard | Allow 1 day, then fall back to plain dimming |
 | Dropping below 60fps | One real-time light, no real-time shadows, low-poly models. Check every milestone. |
 | Behind schedule | Follow the cut list. Submit on the 16th no matter what. |

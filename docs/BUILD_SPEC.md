@@ -1,102 +1,127 @@
 # Hold Still: Build Spec (for the coding agent)
 
-This is the technical spec for building **Hold Still**. Read [`DESIGN.md`](DESIGN.md) first; it explains *what* the game is. This file explains *how* to build it and in what order.
+[`DESIGN.md`](DESIGN.md) says **what** the game is. This file says **how** to build it and **in what order**.
+
+**Numbers live in one place.** Every timing and tuning value is in `DESIGN.md`, so read it from there. If you change a value after testing, update `DESIGN.md` in the same commit.
+
+---
 
 ## Hard requirements (never break these)
 
-1. **Hands only.** No step of the game may ever need a controller.
-2. **Seated.** Everything must work from a desk chair.
-3. **60fps minimum** on Quest 3 / 3S (aim for 72).
-4. **Every tuning number is editable in the Unity Inspector.** Don't hard-code timings.
-5. **Build one milestone at a time** and test it on the headset before starting the next.
-6. **No features beyond this spec** unless the human asks for them.
+1. **It's a web app.** It runs in the **Meta Quest Browser** on a **Quest 3 / 3S** using WebXR, as an `immersive-ar` session for passthrough.
+2. **Hands only.** No step may ever need a controller.
+3. **Seated.** Everything must work from a desk chair.
+4. **60fps minimum** in the Quest Browser (aim for 72).
+5. **Every tuning value is easy to change in one config place.** No timings buried in code.
+6. **Build one milestone at a time.** Stop at the end of each one and report to the human.
+7. **No features beyond this spec and `DESIGN.md`.** Pitch new ideas in your report instead.
+
+---
+
+## Locked vs. open for creativity
+
+| 🔒 Locked: don't change | 🎨 Open: your call, make it great |
+|---|---|
+| The hard requirements above | How the monsters look (keep them mostly unseen) |
+| The core rules in `DESIGN.md` | Sound design and how each warning *feels* |
+| The four threats and **their counters** | The caught moments and jumpscares |
+| The fairness rules | The title screen, the ending, transitions |
+| The five nights and which threats are in each | The dark-room effect and the flashlight look |
+| The milestone order and scope | Code structure, file names, internal design |
+| | Starting tuning values, as long as you update `DESIGN.md` |
+| | Small "juice": subtle effects that make it feel better without adding features |
+
+If an idea would change something on the locked side, put it in your report as a pitch. Don't build it.
+
+---
 
 ## Platform
 
 | Thing | Choice |
 |---|---|
-| Engine | Unity, the version Meta's latest (v207) SDK docs recommend, with Android Build Support |
-| Headset | Meta Quest 3 / 3S (needs color passthrough) |
-| Meta SDKs | Meta XR **Core** SDK (camera rig, hand tracking, passthrough), **Interaction** SDK (hand rig), **MR Utility Kit** (room data) |
-| Agent tooling | Meta's `metavr` CLI (`metavr init`) for documentation and device debugging |
-| Development machine | **Mac**. Quest Link is Windows-only, so test with **Build and Run over USB**. Use the Meta XR Simulator for quick checks if your version supports Mac. |
-| Permissions | Microphone, Scene (`com.oculus.permission.USE_SCENE`), hand tracking |
+| Framework | **Meta Immersive Web SDK (IWSDK)**, which is Three.js plus an Entity Component System. Start from its official project scaffold. |
+| Language | TypeScript |
+| Session | WebXR `immersive-ar` with hand tracking; plane detection, mesh detection and anchors where available |
+| Testing without a headset | IWSDK's **IWER emulator** in a desktop browser |
+| Testing on the headset | An **HTTPS link** opened in the Quest Browser |
+| Hosting | Any free HTTPS static host that deploys automatically on push, such as GitHub Pages, Netlify or Vercel. The human must get a working link every milestone. |
+| Microphone | Web Audio API with `getUserMedia`, measuring loudness only. Nothing is recorded, saved or sent anywhere. |
+| Docs | Meta's IWSDK documentation is the authority. Check it instead of guessing APIs. |
 
-## Architecture
+**Don't** package it as a store app (PWA or otherwise) unless the human confirms the competition rules need it.
 
-Keep each script small and doing one job.
+---
 
-| Component | Job |
+## What the game needs to know (suggested modules)
+
+The names and structure here are suggestions, so organize the code however you think is best. The **behavior** is what matters.
+
+| Module | Must do |
 |---|---|
-| **GameManager** | Runs the intro (which doubles as calibration), then nights 1–5 in order. On "caught", waits 3 s and restarts the current night. Fires events: night started, night survived, player caught, game won. |
-| **AttackScheduler** | Decides when each active threat attacks. Applies the **fairness rules** and the 2-attacks-at-once limit from `DESIGN.md`, and the "first appearance attacks alone" rule. |
-| **Threat** (base class) | The **danger meter**: fills while not countered (scaled by aggression), drains while countered, the threat leaves after "survive seconds" of countering, and catches the player at 100%. Subclasses only define *"is the player countering me?"* plus visuals and sound. |
-| **UnderDeskThreat** | Countered when `PlayerHands` reports both hands flat. |
-| **ListenerThreat** | Countered while the mic level is under the threshold. Mutes all other game audio while attacking. |
-| **PeekerThreat** | Spawns at a random real window. Countered while the flashlight beam is on the face. |
-| **KnockerThreat** | Spawns at a real door. Countered while either palm faces the door. |
-| **PlayerHands** | Desk height from the intro calibration. "Flat" means the palm is within ±5 cm of desk height and facing down. **If a hand loses tracking, keep its last state** instead of counting it as lifted. Also answers "is either palm facing point X?" |
-| **MicLoudness** | Reads the room's loudness (a running average, nothing recorded or saved) and measures the room's normal noise level during the intro. Handles the Android microphone permission. |
-| **Flashlight** | Attached to a hand: on while pinching, battery drains while on and refills each night. Answers "is point X inside the beam?" |
-| **RoomFinder** | Uses the MR Utility Kit to get the positions of **WINDOW_FRAME** and **DOOR_FRAME** (later also TABLE, BED, COUCH). If none are marked, falls back to a "point and pinch to place" step in the intro. |
-| **DarkRoom** | Dims passthrough to near-black at night start and back at the end. Stretch: the flashlight reveals the real room. |
-| **DebugOverlay** | Floating text above the desk: hands flat for each hand, mic level and threshold, battery, each threat's danger %, room data counts. Toggled on in development builds. |
+| **Game flow** | Title screen → intro (doubles as calibration) → nights 1–5 → ending. On caught: a short pause, then restart the current night. |
+| **Attack scheduler** | Decides when each active threat attacks, and enforces **all fairness rules** in `DESIGN.md`. |
+| **Threat (shared logic)** | The **danger meter** described in `DESIGN.md`. Each threat only defines *"is the player countering me right now?"* plus its own visuals and sound. |
+| **The four threats** | Under the Desk, Listener, Peeker, Knocker, exactly as `DESIGN.md` describes. |
+| **Hands** | Detects "both hands flat on the desk" using the desk height from the intro. Detects "palm facing a point" for the Knocker, and the pinch for the flashlight. **If a hand loses tracking, keep its last state** instead of counting it as lifted. |
+| **Mic** | Live loudness level, the room's normal noise level from the intro, and graceful handling if permission is denied (see `DESIGN.md`). |
+| **Flashlight** | On while pinching, with the battery from `DESIGN.md`. Answers "is this point inside the beam?" |
+| **Room** | Finds real windows and doors from scene understanding. **Label support in the Quest Browser is unverified**, so log what labels the headset actually reports. If no window or door is found, use the point-and-pinch placement from `DESIGN.md`. |
+| **Dark room** | WebXR can't dim passthrough directly, so draw a darkness layer around the player that fades in at night start. Stretch: the flashlight cuts a soft hole in it, revealing the real room. |
+| **Debug overlay** | Floating text above the desk with hand states, mic level vs threshold, battery, each threat's danger %, and what the room scan found. Visible in development, hidden in release. |
+
+---
 
 ## Milestones
 
-Each milestone has a "done when" check. **Don't move on until it passes on the real headset.**
+Stop after each milestone and send the human the report described in [`PROMPTS.md`](PROMPTS.md). The target dates match [`PLAN.md`](PLAN.md).
 
-### M1 — Foundation (target: Nov 1)
-- Unity project with Meta XR SDKs; hand tracking + passthrough running on Quest 3 via Build and Run.
-- `RoomFinder` puts a debug cube on each real window and door.
-- `PlayerHands` with intro calibration; `MicLoudness` with permission handling.
-- `DebugOverlay` showing all of the above.
-- **Test the mic:** play loud game sound, and record whether the mic level jumps.
-- Allow **at most 1 day** for the DarkRoom flashlight-reveal effect, otherwise use plain dimming.
+### M1: Foundation (target: Nov 1)
+- Project scaffolded with IWSDK and auto-deploy to an HTTPS link.
+- An `immersive-ar` session with passthrough and hand tracking.
+- Room scan: log every plane and mesh label the headset reports, and mark windows and doors (or run the placement fallback).
+- Hands: intro calibration plus flat detection. Mic: permission plus live level.
+- Debug overlay showing all of it.
+- **Mic check:** play a loud test sound and show whether the mic level jumps.
+- Dark room: the darkness layer fades in. Spend **no more than ~1 day** on the flashlight-reveal stretch goal.
 
-**Done when:** in the headset you see cubes on your real window and door, the overlay correctly says when each hand is flat, and the mic level jumps when you talk.
+**Done when:** on the Quest 3 the human opens the link and enters AR. They see markers on their real window and door (or can place them), the overlay correctly shows when each hand is flat, and the mic level jumps when they talk.
 
-### M2 — The core loop (target: Nov 5)
-- `Threat` base, `GameManager`, `AttackScheduler`.
-- `UnderDeskThreat` and `ListenerThreat` with placeholder sounds.
-- Nights 1 and 3 playable (night 3 temporarily without the Peeker); catch → restart works.
+### M2: The core loop (target: Nov 5)
+- Shared threat logic, game flow, attack scheduler.
+- Under the Desk and the Listener, with placeholder sounds.
+- Nights 1 and 3 playable (night 3 temporarily without the Peeker); caught → restart works.
 
-**Done when:** you can survive and get caught by both threats, and getting caught restarts the night.
+**Done when:** the human can both survive and get caught by each threat, and getting caught restarts the night.
 
-### M3 — Peeker and the full first half (target: Nov 8)
-- `Flashlight` (pinch, battery) and `PeekerThreat` at real windows.
-- Nights 1–3 as designed.
+### M3: Peeker (target: Nov 8)
+- Flashlight plus the Peeker at real windows.
+- Nights 1–3 exactly as designed.
 
-**Done when:** a friend plays nights 1–3 hands-only without help, after only the intro.
+**Done when:** a friend plays nights 1–3 hands-only, with no help beyond the intro.
 
-### M4 — Complete game (target: Nov 12)
-- `KnockerThreat`, nights 4–5, fairness rules fully on.
-- Title screen (with jumpscare warning and mic-off notice), the ending, and caught-moment jumpscares.
-- Positional audio for every threat, plus real sound recordings.
+### M4: Complete game (target: Nov 12)
+- The Knocker, nights 4–5, every fairness rule enforced.
+- Title screen (with the jumpscare warning and mic-off notice), the ending, the caught moments.
+- Spatial audio for every threat; swap in real sounds the human provides.
 
-**Done when:** the full 5 nights can be played start to finish and no impossible overlaps happen.
+**Done when:** all 5 nights play start to finish with no impossible overlaps.
 
-### M5 — Polish and performance (target: Nov 14)
-- Steady 60fps or better, checked with Meta's Device Readiness Check.
-- Playtest fixes from at least 3 new players.
-- Debug overlay off in release build.
-- Stretch only if everything above is done: The Watcher.
+### M5: Polish and performance (target: Nov 14)
+- Steady 60fps or better in the Quest Browser through night 5.
+- Fix the problems from the human's playtest notes.
+- Debug overlay hidden in the release build.
+- Only if everything above is done: the Watcher (stretch, see `DESIGN.md`).
 
-**Done when:** a release build runs at 60fps or more through night 5 and passes the Device Readiness Check.
+**Done when:** the release link runs at 60fps or more through night 5, and a full playthrough works hands-only.
+
+---
 
 ## Performance budget
-- One real-time light (the flashlight). Everything else is unlit or baked.
+- At most one real-time light, used for the flashlight; fake it with a shader if that's cheaper. Everything else unlit or baked.
 - No real-time shadows.
-- Low-poly models and small textures. The monsters are mostly in darkness anyway.
+- Low-poly models, compressed textures and models. The monsters are mostly in darkness anyway.
+- Keep the scene-understanding debug visuals off outside of debug mode.
 
-## Prompts for your coding agent
-
-Paste these one at a time, and only start the next after the previous milestone's "done when" passes.
-
-1. *"Read `docs/DESIGN.md` and `docs/BUILD_SPEC.md`. Set up a Unity project for Meta Quest 3 with the Meta XR Core SDK, Interaction SDK and MR Utility Kit. I develop on a Mac, so plan for Build and Run over USB. Then build milestone M1. Stop when M1 is done and tell me exactly how to test it on my headset."*
-2. *"M1 passed. Build milestone M2 from `docs/BUILD_SPEC.md`. Keep every timing in the Inspector."*
-3. *"M2 passed. Build milestone M3."*
-4. *"M3 passed. Build milestone M4. Follow the fairness rules in `docs/DESIGN.md` exactly."*
-5. *"M4 passed. Do milestone M5: performance and polish. Here's the playtest feedback: …"*
-
-If something breaks: *"This happened on the headset: [describe]. Here's the log: [paste]. Find the cause before changing code."*
+## Testing rules
+- Test everything you can in the emulator before handing off.
+- **Say plainly what you could not verify** without a real headset, such as the mic, the real room or hand feel, and give the human exact steps to check it.
