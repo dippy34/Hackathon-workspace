@@ -11,6 +11,7 @@ node e2e/smoke.mjs                        # title -> mic -> XR -> calibration ->
 node e2e/caught.mjs                       # each threat catches you; the night restarts
 node e2e/full-run.mjs                     # all 5 nights with an ideal-player autopilot (~13 min)
 node e2e/resume.mjs                       # leave XR mid-night / after surviving, re-enter
+node e2e/showcase.mjs                     # renders each monster (low danger, full danger, close-up, caught)
 ```
 
 `autopilot.mjs` poses the emulated hands from the director's live state: hands
