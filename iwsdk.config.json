@@ -11,7 +11,7 @@
   "world": {
     "xr": {
       "mode": "ar",
-      "offer": "always",
+      "offer": "none",
       "features": {
         "handTracking": true,
         "anchors": true,
@@ -20,11 +20,11 @@
       }
     },
     "input": {
-      "canvasPointerEvents": true
+      "canvasPointerEvents": false
     },
     "render": {
-      "near": 0.001,
-      "far": 200,
+      "near": 0.02,
+      "far": 60,
       "camera": {
         "position": [
           0,
@@ -37,11 +37,9 @@
       "locomotion": false,
       "grabbing": false,
       "physics": false,
-      "sceneUnderstanding": true,
+      "sceneUnderstanding": false,
       "environmentRaycast": false,
-      "spatialUI": {
-        "kit": "horizon"
-      }
+      "spatialUI": false
     }
   },
   "dev": {

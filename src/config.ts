@@ -100,6 +100,8 @@ export const CONFIG = {
   caught: {
     /** Total time from being caught until the night restarts (the caught moment plays inside it). */
     pauseSec: 3,
+    /** impl: seconds of caught moment before the screen cuts to black (inside pauseSec). */
+    cutToBlackSec: 0.9,
   },
 
   // ─── Hands (DESIGN.md Under the Desk, Knocker, Peeker) ─────────────────────
@@ -173,6 +175,8 @@ export const CONFIG = {
     restartIntroSec: 3,
     /** impl: pause after surviving a night before the next one starts. */
     nightClearedSec: 6,
+    /** impl: how long a teaching hint stays scrawled near a threat's first attack. */
+    teachingHintSec: 5,
   },
 
   audio: {
