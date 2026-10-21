@@ -156,6 +156,16 @@ export const CONFIG = {
     beamRangeM: 9,
     /** impl: battery fraction below which the battery glow starts to flicker. */
     lowBatteryFraction: 0.2,
+    /** impl: smoothing time constant (s) of the beam's aim (kills hand-tracking jitter). */
+    smoothingSec: 0.04,
+    /** impl: half-angle of the visible beam and the SpotLight, as a multiple of beamHalfAngleDeg (soft edges). */
+    visualAngleScale: 1.5,
+    /** impl: SpotLight intensity (candela, decay 2) at full battery. */
+    lightIntensity: 12,
+    /** impl: brightness of the visible (volumetric) beam at full battery. */
+    beamGlow: 0.6,
+    /** impl: how much the beam dims as the battery runs from lowBatteryFraction to empty (0..1). */
+    lowBatteryDim: 0.45,
   },
 
   // ─── Intro / calibration (DESIGN.md "The intro") ──────────────────────────
@@ -182,6 +192,36 @@ export const CONFIG = {
     nightOpacity: 0.94,
     /** impl: radius (m) of the darkness shell around the player's head. */
     radiusM: 12,
+    /** impl: once fully dark, opacity slowly "breathes" by this fraction (±). */
+    breathAmplitude: 0.015,
+    /** impl: the dying-bulb flicker plays in this first fraction of a lights-out fade. */
+    flickerFraction: 0.15,
+    /** impl: film grain strength (opacity units, peak to peak). */
+    grain: 0.025,
+  },
+
+  /** impl: floating text (TextCard) and teaching-hint scrawls (ScrawlLabel). */
+  text: {
+    /** impl: default world height (m) of one line of card text. */
+    lineHeightM: 0.06,
+    /** impl: default card fade-in / fade-out (s). */
+    fadeInSec: 0.6,
+    fadeOutSec: 0.8,
+    /** impl: word-wrap width in characters. */
+    charsPerLine: 28,
+    /** impl: 'gaze' cards float this far (m) in front of the head. */
+    gazeDistanceM: 1.2,
+    /** impl: a 'gaze' card glides back to centre once it is this far (deg) off. */
+    gazeRecentreDeg: 25,
+    /** impl: a 'gaze' card may sink this far (deg) below eye level when the player looks down (e.g. at the desk). */
+    gazeMaxDownDeg: 25,
+    /** impl: peak opacity of a hint scrawl (faint on purpose). */
+    scrawlOpacity: 0.55,
+    /** impl: a scrawl keeps this angular height (deg) at any distance. */
+    scrawlLineDeg: 2.6,
+    /** impl: seconds for a scrawl to be "written" in, and to fade in / out. */
+    scrawlWriteSec: 0.9,
+    scrawlFadeSec: 0.5,
   },
 
   flow: {
@@ -252,11 +292,91 @@ export const CONFIG = {
     },
   },
 
+  // ─── Threat presentation (BUILD_SPEC "open": looks, sound, caught moments) ─
+  threatFx: {
+    /** impl: seconds a threat's spatial voice lingers after it leaves, so its retreat sound can finish. */
+    voiceLingerSec: 3,
+    underDesk: {
+      /** impl: the scratching comes from this far below the desk centre (m)... */
+      voiceBelowDeskM: 0.45,
+      /** impl: ...and this far from the desk centre toward the player (m). */
+      voiceTowardPlayerM: 0.15,
+      /** impl: the desk's near edge, measured from the calibrated palm midpoint toward the player (m). */
+      nearEdgeM: 0.3,
+      /** impl: calibrated palm height above the real desk surface (m). */
+      palmAboveSurfaceM: 0.025,
+      /** impl: seconds for the fingers to withdraw under the desk when it leaves. */
+      withdrawSec: 0.9,
+      /** impl: seconds for the caught hand to lunge from under the desk to the face. */
+      lungeSec: 0.35,
+      /** impl: gain of the caught 'grab' one-shot. */
+      grabGain: 1.2,
+    },
+    peeker: {
+      /** impl: the face first appears this far outside the window plane (m). */
+      startOutsideM: 0.25,
+      /** impl: at a full meter the face has come this far through the glass into the room (m). */
+      fullInsideM: 0.6,
+      /** impl: how far the face recoils while it is lit (m). */
+      flinchRecoilM: 0.08,
+      /** impl: face brightness in the dark (faint self-glow) and when caught in the beam. */
+      darkBrightness: 0.3,
+      litBrightness: 1.0,
+      /** impl: seconds for the face to pull back outside and fade when it leaves. */
+      retreatSec: 1.1,
+      /** impl: seconds for the face to rush at the player's head when caught. */
+      rushSec: 0.4,
+      /** impl: gain of the caught 'faceRush' one-shot. */
+      faceRushGain: 1.2,
+    },
+    knocker: {
+      /** impl: height above the floor (m) of the door's sound (handle height). */
+      voiceHeightM: 1.0,
+      /** impl: width (m) of the light sliver at the door's edge at an empty / full meter. */
+      sliverMinM: 0.006,
+      sliverMaxM: 0.16,
+      /** impl: fraction the sliver narrows while a palm holds the door back. */
+      pushBackNarrow: 0.35,
+      /** impl: seconds for the light to close when it leaves. */
+      closeSec: 0.7,
+      /** impl: seconds for the silhouette to rush from the burst door to the player when caught. */
+      rushSec: 0.55,
+      /** impl: gain of the caught 'doorBurst' one-shot. */
+      doorBurstGain: 1.2,
+    },
+    listener: {
+      /** impl: the caught scream plays this far beside the head (m). */
+      screamOffsetM: 0.12,
+      /** impl: gain of the caught 'scream' one-shot ("right next to the ear"). */
+      screamGain: 1.6,
+      /** impl: ringing intensity at an empty / full meter (it rises only very slightly). */
+      ringingMin: 0.35,
+      ringingMax: 0.55,
+    },
+  },
+
+  title: {
+    /** impl: if the mic prompt still hasn't answered after this long, "Enter the room" unlocks anyway. */
+    micGraceSec: 10,
+  },
+
   debug: {
     /** Overlay shown by default during development (M1). Override with ?debug=0 / ?debug=1. */
     overlayDefault: true,
     /** impl: overlay redraws per second. */
     overlayHz: 6,
+    /** impl: overlay panel width (m). */
+    overlayWidthM: 0.55,
+    /** impl: with a desk: panel centre this far above the desk centre (m)... */
+    overlayAboveDeskM: 0.45,
+    /** impl: ...and this far beyond it, away from the player (m). */
+    overlayBeyondDeskM: 0.25,
+    /** impl: without a desk: panel this far in front of the head (m), offset left and down. */
+    overlayHeadDistM: 0.9,
+    overlayHeadLeftM: 0.32,
+    overlayHeadDownM: 0.1,
+    /** impl: mic/baseline ratio while game audio plays at or above which the overlay says "mic hears game: YES". */
+    micLeakRatio: 2,
   },
 } as const;
 

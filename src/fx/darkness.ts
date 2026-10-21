@@ -151,7 +151,8 @@ export class Darkness implements DarknessLike {
     if (p >= win) return 0;
     const x = p / win;
     let level = 0;
-    for (const dip of DIPS) {
+    for (let i = 0; i < DIPS.length; i++) {
+      const dip = DIPS[i];
       const t = 1 - Math.abs(x - dip.c) / dip.w;
       if (t > 0) level = Math.max(level, dip.h * smooth01(t / 0.3));
     }

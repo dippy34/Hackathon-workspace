@@ -1,4 +1,4 @@
-import { CONFIG, NIGHT_COUNT, nightTuning, type ThreatId } from '../config.js';
+import { CONFIG, NIGHT_COUNT, nightTuning, type NightTuning, type ThreatId } from '../config.js';
 import { TIME_EPS } from './math.js';
 import { NightRunner } from './night-runner.js';
 import { mulberry32, randomSeed } from './rng.js';
@@ -20,11 +20,25 @@ const NEVER_COUNTERING: CounteringFn = () => false;
  * update(); the rest of that frame's dt is not carried into the next phase.
  * NightRunner events are forwarded to `events`; onPhaseChange fires on every
  * transition (including a debug jump into the phase it is already in).
+ *
+ * Timing after a catch (DESIGN.md "Implementation notes", Caught): the caught
+ * phase lasts `caught.pauseSec`, then the night restarts with the shorter
+ * `flow.restartIntroSec` lead-in before its clock starts again.
+ *
+ * Disabled threats (DESIGN.md "Comfort and accessibility": no microphone means
+ * no Listener): `setDisabledThreats` removes threats from the schedule of every
+ * night built afterwards. A disabled threat never attacks, never counts toward
+ * maxConcurrent and has no teaching attack (night 3 without the Listener runs
+ * with just Under the Desk and the Peeker, and no teaching moment).
+ *
+ * A runner the flow abandons (debug jump, restart) is disposed at once, and
+ * events from any runner but the current one are dropped, so an event handler
+ * that moves the flow can't leak the old night's events into the new one.
  */
 export class GameFlow {
   private readonly events: FlowEvents;
   private readonly rng: Rng;
-  private readonly nightEvents: NightEvents;
+  private disabled: readonly ThreatId[] = [];
   private _phase: Phase = 'title';
   private _night = 0;
   private _phaseTime = 0;
@@ -36,15 +50,6 @@ export class GameFlow {
   constructor(events: FlowEvents = {}, rng: Rng = mulberry32(randomSeed())) {
     this.events = events;
     this.rng = rng;
-    this.nightEvents = {
-      onAttackStart: (a) => this.events.onAttackStart?.(a),
-      onAttackLeave: (a) => this.events.onAttackLeave?.(a),
-      onCaught: (a) => {
-        this._lastCaughtBy = a.id;
-        this.events.onCaught?.(a);
-      },
-      onSurvived: () => this.events.onSurvived?.(),
-    };
   }
 
   get phase(): Phase {
@@ -70,6 +75,20 @@ export class GameFlow {
   get restarts(): number {
     return this._restarts;
   }
+  /** Threats removed from the schedule (see setDisabledThreats). */
+  get disabledThreats(): readonly ThreatId[] {
+    return this.disabled;
+  }
+
+  /**
+   * Removes threats from the schedule, e.g. the Listener when the microphone
+   * is denied (DESIGN.md "Comfort and accessibility"). Takes effect for the
+   * next night (or restart) whose clock starts, not for a night already
+   * running. The list is copied; pass [] to enable everything again.
+   */
+  setDisabledThreats(ids: readonly ThreatId[]): void {
+    this.disabled = [...ids];
+  }
 
   begin(): void {
     if (this._phase === 'title') this.setPhase('intro');
@@ -93,7 +112,7 @@ export class GameFlow {
     switch (this._phase) {
       case 'nightIntro':
         if (this._phaseTime >= this.introSec - TIME_EPS) {
-          this._runner = new NightRunner(nightTuning(this._night), this.rng, this.nightEvents);
+          this._runner = this.createRunner();
           this.setPhase('night');
         }
         return;
@@ -125,9 +144,38 @@ export class GameFlow {
       this._lastCaughtBy = null;
     }
     this._night = night;
+    this._runner?.dispose();
     this._runner = null;
     this.introSec = restart ? CONFIG.flow.restartIntroSec : CONFIG.flow.nightIntroSec;
     this.setPhase('nightIntro');
+  }
+
+  /** Tonight's runner, minus disabled threats, with events forwarded only while it is current. */
+  private createRunner(): NightRunner {
+    const base = nightTuning(this._night);
+    const disabled = this.disabled;
+    const tuning: NightTuning =
+      disabled.length === 0 ? base : { ...base, threats: base.threats.filter((id) => !disabled.includes(id)) };
+    const events = this.events;
+    const isCurrent = () => this._runner === runner;
+    const forward: NightEvents = {
+      onAttackStart: (a) => {
+        if (isCurrent()) events.onAttackStart?.(a);
+      },
+      onAttackLeave: (a) => {
+        if (isCurrent()) events.onAttackLeave?.(a);
+      },
+      onCaught: (a) => {
+        if (!isCurrent()) return;
+        this._lastCaughtBy = a.id;
+        events.onCaught?.(a);
+      },
+      onSurvived: () => {
+        if (isCurrent()) events.onSurvived?.();
+      },
+    };
+    const runner: NightRunner = new NightRunner(tuning, this.rng, forward);
+    return runner;
   }
 
   private setPhase(next: Phase): void {

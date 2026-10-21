@@ -390,3 +390,124 @@ describe('GameFlow: debugJumpToNight', () => {
     expect(c.flow.runner!.tuning.night).toBe(2);
   });
 });
+
+describe('GameFlow: an event handler that moves the flow', () => {
+  it('a debug jump from onAttackStart stops the old runner at once, so nothing leaks into the new night', () => {
+    const log: string[] = [];
+    let jumped = false;
+    let flow!: GameFlow;
+    flow = new GameFlow(
+      {
+        onPhaseChange: (phase, night) => log.push(`phase ${phase} n${night}`),
+        onAttackStart: (a) => {
+          log.push(`start ${a.id}`);
+          if (!jumped) {
+            jumped = true;
+            flow.debugJumpToNight(1);
+          }
+        },
+        onAttackLeave: (a) => log.push(`leave ${a.id}`),
+        onCaught: (a) => log.push(`caught ${a.id}`),
+        onSurvived: () => log.push('survived'),
+      },
+      mulberry32(9),
+    );
+    flow.debugJumpToNight(5);
+    runPhase(flow, never); // -> night 5
+    const old = flow.runner!;
+    // Step until an attack is due within one substep, then take a 0.1 s frame (3 substeps).
+    while (!jumped) {
+      const due = Math.min(...old.tuning.threats.map((id) => old.nextAttackInSec(id) ?? Infinity));
+      flow.update(due > 0 && due < 1 / 60 ? 0.1 : DT, never);
+    }
+    const startedAt = old.elapsedSec;
+    expect(log.slice(-2)).toEqual([expect.stringMatching(/^start /), 'phase nightIntro n1']);
+    expect(flow.phase).toBe('nightIntro');
+    expect(flow.night).toBe(1);
+    expect(flow.runner).toBeNull();
+    // Hammer the flow with never-countering frames through the new night's intro:
+    // the abandoned night-5 runner must not advance or fire anything.
+    const before = log.length;
+    for (let i = 0; i < 72 * 3; i++) flow.update(DT, never);
+    expect(log.slice(before)).toEqual([]);
+    expect(old.elapsedSec).toBe(startedAt);
+    expect(flow.lastCaughtBy).toBeNull();
+  });
+});
+
+describe('GameFlow: disabled threats (no microphone -> no Listener)', () => {
+  /** Plays the current night intro and night with an always-countering player. */
+  function playNight(flow: GameFlow): void {
+    runPhase(flow, always); // nightIntro -> night
+    expect(flow.phase).toBe('night');
+    runPhase(flow, always); // night -> nightCleared / ending
+    expect(['nightCleared', 'ending']).toContain(flow.phase);
+  }
+
+  it('night 3 without the Listener runs Under the Desk and the Peeker only, with no teaching attack', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const starts: { id: ThreatId; teaching: boolean; at: number }[] = [];
+      let flow!: GameFlow;
+      flow = new GameFlow(
+        { onAttackStart: (a) => starts.push({ id: a.id, teaching: a.teaching, at: flow.runner!.elapsedSec }) },
+        mulberry32(seed),
+      );
+      flow.setDisabledThreats(['listener']);
+      expect(flow.disabledThreats).toEqual(['listener']);
+      flow.debugJumpToNight(3);
+      playNight(flow);
+      expect(flow.runner!.tuning.threats).toEqual(nightTuning(3).threats.filter((id) => id !== 'listener'));
+      expect(flow.runner!.tuning.maxConcurrent).toBe(nightTuning(3).maxConcurrent);
+      expect(starts.length).toBeGreaterThan(0);
+      expect(starts.filter((s) => s.id === 'listener')).toEqual([]);
+      expect(starts.filter((s) => s.teaching)).toEqual([]);
+      // With no teaching attack, nothing starts inside the quiet opening.
+      expect(starts[0].at).toBeGreaterThanOrEqual(CONFIG.scheduler.quietOpeningSec - 1e-6);
+      expect(new Set(starts.map((s) => s.id))).toEqual(new Set(['underDesk', 'peeker']));
+    }
+  });
+
+  it('with nothing disabled, night 3 still teaches the Listener (control)', () => {
+    const starts: { id: ThreatId; teaching: boolean }[] = [];
+    const flow = new GameFlow({ onAttackStart: (a) => starts.push({ id: a.id, teaching: a.teaching }) }, mulberry32(4));
+    flow.debugJumpToNight(3);
+    playNight(flow);
+    expect(starts[0]).toEqual({ id: 'listener', teaching: true });
+  });
+
+  it('applies when set during nightIntro (as the director does), keeps a copy, survives restarts, and can be undone', () => {
+    const disabled: ThreatId[] = [];
+    let flow!: GameFlow;
+    flow = new GameFlow(
+      {
+        onPhaseChange: (phase, night) => {
+          if (phase !== 'nightIntro') return;
+          disabled.length = 0;
+          if (night === 3) disabled.push('listener');
+          flow.setDisabledThreats(disabled);
+        },
+      },
+      mulberry32(11),
+    );
+    flow.debugJumpToNight(3);
+    disabled.push('peeker'); // mutating the caller's array afterwards changes nothing
+    expect(flow.disabledThreats).toEqual(['listener']);
+    runPhase(flow, always);
+    expect(flow.runner!.tuning.threats).not.toContain('listener');
+    expect(flow.runner!.tuning.threats).toContain('peeker');
+
+    // Caught -> restart of night 3: still without the Listener.
+    runPhase(flow, never);
+    expect(flow.phase).toBe('caught');
+    runPhase(flow, never);
+    expect(flow.phase).toBe('nightIntro');
+    runPhase(flow, always);
+    expect(flow.restarts).toBe(1);
+    expect(flow.runner!.tuning.threats).not.toContain('listener');
+
+    // Night 4: the handler re-enables everything.
+    flow.debugJumpToNight(4);
+    runPhase(flow, always);
+    expect(flow.runner!.tuning.threats).toEqual(nightTuning(4).threats);
+  });
+});

@@ -1,5 +1,6 @@
 import {
   AddEquation,
+  AdditiveBlending,
   BackSide,
   CanvasTexture,
   Color,
@@ -10,14 +11,13 @@ import {
   Mesh,
   MeshBasicMaterial,
   OneFactor,
+  Quaternion,
   ShaderMaterial,
   SpotLight,
   Sprite,
   SpriteMaterial,
   Vector3,
   ZeroFactor,
-  AdditiveBlending,
-  Quaternion,
   type World,
 } from '@iwsdk/core';
 import { CONFIG } from '../config.js';
@@ -68,6 +68,7 @@ varying vec3 vLocal;
 varying vec3 vEyeLocal;
 varying vec3 vWorld;
 varying vec3 vEyeWorld;
+const mat3 DUST_ROT = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);
 
 float hash13(vec3 p) {
   p = fract(p * 0.1031);
@@ -129,11 +130,10 @@ void main() {
   }
   float lum = sum * 0.4 * chord * uGlow;
 
-  // World-anchored dust: slow shimmer plus the odd drifting mote.
-  vec3 qw = vEyeWorld + normalize(vWorld - vEyeWorld) * (tIn + chord * 0.3);
-  float dust = 0.85 + 0.3 * vnoise(qw * 5.0 + vec3(0.0, uTime * 0.05, uTime * 0.02));
-  float mote = pow(vnoise(qw * 26.0 + vec3(uTime * 0.11, -uTime * 0.07, 0.0)), 10.0) * 1.5;
-  gl_FragColor = vec4(uColor * lum * (dust + mote), 0.0);
+  // Faint world-anchored dust shimmer drifting through the beam (rotated domain hides the noise grid).
+  vec3 qw = DUST_ROT * (vEyeWorld + normalize(vWorld - vEyeWorld) * (tIn + chord * 0.3));
+  float dust = 0.86 + 0.28 * vnoise(qw * 2.5 + vec3(0.0, uTime * 0.06, uTime * 0.025));
+  gl_FragColor = vec4(uColor * lum * dust, 0.0);
   #include <colorspace_fragment>
 }`;
 

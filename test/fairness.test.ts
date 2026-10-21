@@ -6,7 +6,9 @@
  * scheduler rules of the spec:
  *  - at most maxConcurrent attacks (3 on night 5, 2 otherwise);
  *  - the fairness rule for hands threats, generalised to several active hands
- *    attacks: caughtAfter / aggression > SUM(h.remainingLeaveSec + reactionSec);
+ *    attacks: caughtAfter / aggression > SUM(h.remainingLeaveSec + reactionSec),
+ *    plus one more reactionSec while none of them is being countered yet, and
+ *    never less than reactionSec - (time since a hands-attack last left);
  *  - teaching attacks (a threat's first attack on its introduction night)
  *    start within teachingStartWithinSec, first, and alone;
  *  - quiet opening / closing windows and the gap sampling ranges.
@@ -26,6 +28,7 @@ import {
   EPS,
   IdealPlayer,
   SIM_DT,
+  SequentialPlayer,
   alwaysCounters,
   describeLog,
   effectiveCaughtAfterSec,
@@ -122,18 +125,21 @@ function checkStarts(log: NightLog, out: string[]): void {
       out.push(`${at}: ${s.others.length + 1} concurrent > maxConcurrent ${tuning.maxConcurrent}`);
     }
 
-    // Fairness rule (generalised sum) for hands threats.
+    // Fairness rule for hands threats: the generalised sum, one more reaction
+    // while no active hands-attack is being countered, and the hand-off
+    // budget right after a hands-attack left.
     if (usesHands(s.id)) {
       const H = s.others.filter((o) => usesHands(o.id));
-      if (H.length > 0) {
-        const need = H.reduce((sum, h) => sum + h.remainingLeaveSec + S.reactionSec, 0);
-        const have = effectiveCaughtAfterSec(s.id, tuning.aggression);
-        if (!(have - need > -1e-9)) {
-          out.push(
-            `${at}: unfair, caughtAfter/aggr ${have.toFixed(3)}s <= ${need.toFixed(3)}s ` +
-              `(active hands: ${H.map((h) => `${h.id} rem ${h.remainingLeaveSec.toFixed(2)}`).join(', ')})`,
-          );
-        }
+      let need = H.reduce((sum, h) => sum + h.remainingLeaveSec + S.reactionSec, 0);
+      if (H.length > 0 && !H.some((h) => h.countering)) need += S.reactionSec;
+      need = Math.max(need, S.reactionSec - s.sinceHandsLeaveSec);
+      const have = effectiveCaughtAfterSec(s.id, tuning.aggression);
+      if (need > 0 && !(have - need > -1e-9)) {
+        out.push(
+          `${at}: unfair, caughtAfter/aggr ${have.toFixed(3)}s <= ${need.toFixed(3)}s ` +
+            `(active hands: ${H.map((h) => `${h.id} rem ${h.remainingLeaveSec.toFixed(2)}${h.countering ? '' : ' uncountered'}`).join(', ') || 'none'}; ` +
+            `last hands leave ${s.sinceHandsLeaveSec.toFixed(3)}s ago)`,
+        );
       }
     }
 
@@ -335,11 +341,61 @@ describe.each(STRESS)('stress tuning: $name', ({ tuning }) => {
   }, 60_000);
 });
 
+/**
+ * Regression: players whose hands are NOT already in place. The fairness rule
+ * used to count an untouched hands-attack's full "leaves after" as if the
+ * player were already countering it (night 2: a Peeker could join a fresh
+ * Under the Desk, 8 s > 6 s + 1.5 s, leaving 2 s for two reactions), and it
+ * vanished in the substep a hands-attack left (Under the Desk, whose caught
+ * after is under 1.5 s on nights 3-5, started while a hand was still on its
+ * way back from the window). Both players below react within DESIGN.md's
+ * budgets, so the scheduler must never catch them.
+ */
+describe('fairness with hands that are not already in place', () => {
+  const SLOW_SEEDS = 150;
+  describe.each([
+    [1.0, 1.4],
+    [1.2, 0.9],
+    [0.5, 1.45],
+    [1.4, 1.45],
+  ])('one-at-a-time player, reaction %s s, switch %s s', (reactionSec, switchSec) => {
+    it.each(NIGHTS)('night %i: never caught', (night) => {
+      const failures: string[] = [];
+      for (let seed = 0; seed < SLOW_SEEDS; seed++) {
+        const log = runNight({ night, seed, player: new SequentialPlayer({ reactionSec, switchSec }) });
+        if (log.outcome !== 'survived') failures.push(describeLog(log));
+      }
+      expect(failures.slice(0, 3), `${failures.length}/${SLOW_SEEDS} caught`).toEqual([]);
+    });
+  });
+
+  it.each([1.0, 1.2, 1.4])('two-hand ideal player with %s s hand moves is never caught on any night', (moveSec) => {
+    const failures: string[] = [];
+    for (const night of NIGHTS) {
+      for (let seed = 0; seed < SLOW_SEEDS; seed++) {
+        const log = runNight({ night, seed, player: new IdealPlayer({ moveSec }) });
+        if (log.outcome !== 'survived') failures.push(describeLog(log));
+      }
+    }
+    expect(failures.slice(0, 3), `${failures.length} caught`).toEqual([]);
+  });
+});
+
 describe('ideal player model sanity', () => {
   it('is caught when it reacts too slowly for Under the Desk (the harness can fail)', () => {
     // 1.6 s reaction > 1.5 s caughtAfter: night 1's teaching attack must catch it.
     const log = runNight({ night: 1, seed: 1, player: new IdealPlayer({ reactionSec: 1.6 }) });
     expect(log.outcome).toBe('caught');
     expect(log.caught?.id).toBe('underDesk');
+  });
+
+  it('the one-at-a-time player is caught when its switch is longer than the 1.5 s budget', () => {
+    // 2.5 s to get from one hands-counter to the next breaks the promise somewhere on night 4.
+    let caught = 0;
+    for (let seed = 0; seed < 50; seed++) {
+      const log = runNight({ night: 4, seed, player: new SequentialPlayer({ reactionSec: 0.5, switchSec: 2.5 }) });
+      if (log.outcome === 'caught') caught++;
+    }
+    expect(caught).toBeGreaterThan(0);
   });
 });

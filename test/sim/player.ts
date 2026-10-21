@@ -179,6 +179,68 @@ export class IdealPlayer implements PlayerModel {
   }
 }
 
+export interface SequentialPlayerOptions {
+  /** Seconds from an attack's start until the player could counter it (capped per attack, see below). */
+  reactionSec?: number;
+  /** Seconds from finishing one hands-counter until the next one can register (moving hands, turning). */
+  switchSec?: number;
+}
+
+/**
+ * A pessimistic but within-budget human for the fairness rule. The
+ * IdealPlayer rests both hands flat (so Under the Desk is countered as soon
+ * as it is noticed) and uses two hands in parallel; this one does neither:
+ *
+ * - It works on ONE hands-threat at a time, oldest first, and finishes it
+ *   (keeps countering until it leaves) before turning to the next.
+ * - Its hands are not assumed to be in place. A counter registers at the
+ *   earliest max(attack start + reaction, previous hands-counter finished +
+ *   switchSec): it has to notice the attack AND get its hands there.
+ * - reaction = min(reactionSec, caughtAfter / aggression - 0.1 s): reacting to
+ *   a fresh attack is budgeted by that threat's own "caught after" (DESIGN.md:
+ *   1.5 s is "enough time to slam your hands down", less at higher aggression).
+ * - switchSec stands for DESIGN.md's "plus 1.5 s to react", so the scheduler
+ *   promises to survive it for any switchSec a little under 1.5 s.
+ * - The Listener needs no hands; the player is always quiet.
+ */
+export class SequentialPlayer implements PlayerModel {
+  readonly reactionSec: number;
+  readonly switchSec: number;
+  private current: AttackView | null = null;
+  private readyAt = 0;
+  private lastFinishedAt = -Infinity;
+
+  constructor(opts: SequentialPlayerOptions = {}) {
+    this.reactionSec = opts.reactionSec ?? 1.0;
+    this.switchSec = opts.switchSec ?? 1.4;
+  }
+
+  plan(runner: NightRunnerLike): CounteringFn {
+    const now = runner.elapsedSec;
+    const aggression = runner.tuning.aggression;
+    const active = runner.activeAttacks();
+    if (this.current && !active.includes(this.current)) {
+      this.current = null;
+      this.lastFinishedAt = now;
+    }
+    if (!this.current) {
+      // Oldest active hands-attack first.
+      let next: AttackView | null = null;
+      for (const a of active) {
+        if (HANDS_NEEDED[a.id] > 0 && (!next || a.ageSec > next.ageSec)) next = a;
+      }
+      if (next) {
+        this.current = next;
+        const reaction = Math.min(this.reactionSec, effectiveCaughtAfterSec(next.id, aggression) - 0.1);
+        this.readyAt = Math.max(now - next.ageSec + reaction, this.lastFinishedAt + this.switchSec);
+      }
+    }
+    const current = this.current;
+    const ready = current !== null && now >= this.readyAt - 1e-9;
+    return (id) => HANDS_NEEDED[id] === 0 || (ready && current!.id === id);
+  }
+}
+
 /** Seconds until this attack catches the player if it gets no counter from now on. */
 export function urgencySec(a: AttackView, aggression: number): number {
   return ((1 - a.meter) * CONFIG.threats[a.id].caughtAfterSec) / aggression;
@@ -191,6 +253,8 @@ export interface ActiveSnapshot {
   id: ThreatId;
   teaching: boolean;
   remainingLeaveSec: number;
+  /** Was the player countering it on the last update? */
+  countering: boolean;
 }
 
 export interface StartRecord {
@@ -202,6 +266,8 @@ export interface StartRecord {
   atSec: number;
   /** Attacks already active when this one started (snapshotted at that moment). */
   others: ActiveSnapshot[];
+  /** Seconds since the most recent hands-attack left (Infinity if none has yet). */
+  sinceHandsLeaveSec: number;
   /** The new attack's own fields at start (should be a fresh meter). */
   fresh: { state: string; meter: number; counteredSec: number; ageSec: number };
 }
@@ -287,6 +353,7 @@ export function runNight(opts: RunNightOptions): NightLog {
   let maxConcurrentSeen = 0;
   let ended = false;
   let eventsAfterEnd = 0;
+  let lastHandsLeaveAt = -Infinity;
 
   const runner: NightRunner = new NightRunner(tuning, mulberry32(nightSeed(opts.night, opts.seed)), {
     onAttackStart(a) {
@@ -297,7 +364,13 @@ export function runNight(opts: RunNightOptions): NightLog {
         id: a.id,
         teaching: a.teaching,
         atSec: runner.elapsedSec,
-        others: others.map((o) => ({ id: o.id, teaching: o.teaching, remainingLeaveSec: o.remainingLeaveSec })),
+        others: others.map((o) => ({
+          id: o.id,
+          teaching: o.teaching,
+          remainingLeaveSec: o.remainingLeaveSec,
+          countering: o.countering,
+        })),
+        sinceHandsLeaveSec: runner.elapsedSec - lastHandsLeaveAt,
         fresh: { state: a.state, meter: a.meter, counteredSec: a.counteredSec, ageSec: a.ageSec },
       });
       if (!live.includes(a)) live.push(a);
@@ -307,6 +380,7 @@ export function runNight(opts: RunNightOptions): NightLog {
       if (ended) eventsAfterEnd++;
       const i = live.indexOf(a);
       if (i >= 0) live.splice(i, 1);
+      if (CONFIG.threats[a.id].usesHands) lastHandsLeaveAt = runner.elapsedSec;
       const rec: LeaveRecord = {
         id: a.id,
         teaching: a.teaching,

@@ -4,6 +4,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   PlaneGeometry,
+  Quaternion,
   SRGBColorSpace,
   ShaderMaterial,
   Vector3,
@@ -54,18 +55,29 @@ function requestFonts(): void {
   })().catch((e: unknown) => console.warn('[text-card] web fonts unavailable, using serif fallback:', e));
 }
 
-/** Greedy word wrap of each paragraph to ~maxChars per line. */
+/** Greedy wrap of one paragraph; returns the line count. */
+function greedyWrap(words: string[], maxChars: number, out: string[] | null): number {
+  let line = '';
+  let count = 0;
+  for (const word of words) {
+    if (line && line.length + 1 + word.length > maxChars) {
+      out?.push(line);
+      count++;
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  out?.push(line);
+  return count + 1;
+}
+
+/** Word wrap to ~maxChars per line, balanced so a paragraph never ends on a lonely word. */
 function wrapLines(text: string, maxChars: number, out: string[]): string[] {
   for (const para of text.split('\n')) {
-    let line = '';
-    for (const word of para.split(/\s+/)) {
-      if (!word) continue;
-      if (line && line.length + 1 + word.length > maxChars) {
-        out.push(line);
-        line = word;
-      } else line = line ? `${line} ${word}` : word;
-    }
-    out.push(line);
+    const words = para.split(/\s+/).filter(Boolean);
+    const n = greedyWrap(words, maxChars, null);
+    let width = maxChars;
+    while (n > 1 && width > 8 && greedyWrap(words, width - 1, null) === n) width--;
+    greedyWrap(words, width, out);
   }
   return out;
 }
@@ -73,16 +85,17 @@ function wrapLines(text: string, maxChars: number, out: string[]): string[] {
 const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 const smooth01 = (x: number): number => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 
-/** Yaw/pitch of the head's forward vector; keeps `prevYaw` when looking straight up/down. */
-function headAngles(head: Object3D, fwd: Vector3, prevYaw: number): { yaw: number; pitch: number } {
-  head.getWorldDirection(fwd); // +Z of the head object...
-  fwd.negate(); // ...the viewer looks down -Z
-  const horiz = Math.hypot(fwd.x, fwd.z);
-  ANGLES.yaw = horiz > 0.1 ? Math.atan2(-fwd.x, -fwd.z) : prevYaw;
-  ANGLES.pitch = Math.asin(Math.max(-1, Math.min(1, fwd.y)));
+const ANGLES = { yaw: 0, pitch: 0 };
+const _q = new Quaternion();
+const _fwd = new Vector3();
+
+/** Yaw/pitch of the head's view direction (-Z); keeps `prevYaw` when looking straight up/down. */
+function headAngles(head: Object3D, prevYaw: number): { yaw: number; pitch: number } {
+  const f = _fwd.set(0, 0, -1).applyQuaternion(head.getWorldQuaternion(_q));
+  ANGLES.yaw = Math.hypot(f.x, f.z) > 0.1 ? Math.atan2(-f.x, -f.z) : prevYaw;
+  ANGLES.pitch = Math.asin(Math.max(-1, Math.min(1, f.y)));
   return ANGLES;
 }
-const ANGLES = { yaw: 0, pitch: 0 };
 
 // ─── TextCard ─────────────────────────────────────────────────────────────
 
@@ -112,7 +125,10 @@ export class TextCard implements TextCardLike {
   private text = '';
   private subtitle = '';
   private color = BONE;
-  private renderedKey = '';
+  /** What the canvas currently shows (null = must redraw). */
+  private drawnText: string | null = null;
+  private drawnSubtitle = '';
+  private drawnColor = '';
   private fontsChanged = false;
   private swapping = false;
 
@@ -131,7 +147,6 @@ export class TextCard implements TextCardLike {
   private readonly worldPos = new Vector3();
   private readonly anchor = new Vector3();
   private readonly headPos = new Vector3();
-  private readonly fwd = new Vector3();
   private readonly euler = new Euler(0, 0, 0, 'YXZ');
   private readonly lines: string[] = [];
   private readonly subLines: string[] = [];
@@ -170,7 +185,7 @@ export class TextCard implements TextCardLike {
   show(text: string, opts: TextCardOptions = {}): void {
     const color = opts.color ?? BONE;
     const mode = opts.mode ?? 'gaze';
-    const showing = this.target > 0 && this.alpha > 0.02;
+    const showing = this.target > 0 && (this.alpha > 0.02 || this.swapping);
     const mainChanged = text !== this.text || color !== this.color;
 
     this.text = text;
@@ -209,7 +224,7 @@ export class TextCard implements TextCardLike {
     if (!this.visible) return;
     if (this.fontsChanged) {
       this.fontsChanged = false;
-      this.renderedKey = '';
+      this.drawnText = null;
       if (!this.swapping) this.redraw();
     }
 
@@ -238,7 +253,7 @@ export class TextCard implements TextCardLike {
   /** Tag-along: stays put until it is > gazeRecentreDeg off-centre, then glides back. Never rolls. */
   private placeGaze(dt: number, head: Object3D): void {
     const t = CONFIG.text;
-    const a = headAngles(head, this.fwd, this.yaw);
+    const a = headAngles(head, this.yaw);
     const targetPitch = Math.max(-t.gazeMaxDownDeg * DEG, Math.min(0, a.pitch));
     if (!this.placed) {
       this.yaw = a.yaw;
@@ -247,15 +262,16 @@ export class TextCard implements TextCardLike {
       this.placed = true;
       this.recentring = false;
     }
+    // Triggered by how far the card is from the actual gaze; glides to the (pitch-clamped) target.
     const dyaw = wrapAngle(a.yaw - this.yaw);
-    const dpitch = targetPitch - this.pitch;
-    const off = Math.hypot(dyaw * Math.cos(this.pitch), dpitch);
-    if (off > t.gazeRecentreDeg * DEG) this.recentring = true;
+    const cosP = Math.cos(this.pitch);
+    if (Math.hypot(dyaw * cosP, a.pitch - this.pitch) > t.gazeRecentreDeg * DEG) this.recentring = true;
     if (this.recentring) {
+      const dpitch = targetPitch - this.pitch;
       const k = 1 - Math.exp(-dt * 4);
       this.yaw = wrapAngle(this.yaw + dyaw * k);
       this.pitch += dpitch * k;
-      if (off < SETTLED_DEG * DEG) this.recentring = false;
+      if (Math.hypot(dyaw * cosP, dpitch) < SETTLED_DEG * DEG) this.recentring = false;
     }
     // The anchor trails the head a little so small head bobs don't drag the text.
     this.anchor.lerp(this.headPos, 1 - Math.exp(-dt / 0.25));
@@ -286,9 +302,10 @@ export class TextCard implements TextCardLike {
 
   /** Re-renders the canvas only when the text, subtitle, colour or font changed. */
   private redraw(): void {
-    const key = `${this.text}\u0000${this.subtitle}\u0000${this.color}`;
-    if (key === this.renderedKey) return;
-    this.renderedKey = key;
+    if (this.drawnText === this.text && this.drawnSubtitle === this.subtitle && this.drawnColor === this.color) return;
+    this.drawnText = this.text;
+    this.drawnSubtitle = this.subtitle;
+    this.drawnColor = this.color;
 
     const g = this.g;
     const lines = wrapLines(this.text, CONFIG.text.charsPerLine, (this.lines.length = 0, this.lines));
@@ -312,28 +329,33 @@ export class TextCard implements TextCardLike {
     g.textBaseline = 'middle';
     g.fillStyle = this.color;
     g.shadowColor = GLOW;
-    let y = CARD_H / 2 - (totalLines * linePx) / 2 + linePx / 2;
+    // Row centres, top to bottom: title lines, a small gap, subtitle lines.
     const rows: { text: string; y: number; sub: boolean }[] = [];
+    let top = (CARD_H - totalLines * linePx) / 2;
     for (const l of lines) {
-      rows.push({ text: l, y, sub: false });
-      y += linePx;
+      rows.push({ text: l, y: top + linePx / 2, sub: false });
+      top += linePx;
     }
-    y += (subGap * SUB_SCALE * linePx) - linePx / 2 + (SUB_SCALE * linePx) / 2;
+    top += subGap * SUB_SCALE * linePx;
     for (const l of subs) {
-      rows.push({ text: l, y, sub: true });
-      y += linePx * SUB_SCALE;
+      rows.push({ text: l, y: top + (SUB_SCALE * linePx) / 2, sub: true });
+      top += SUB_SCALE * linePx;
     }
-    // Pass 1: soft dark glow (helps over a lit room). Pass 2: crisp ink.
-    for (const blur of [fontPx * 0.5, 0]) {
+    // Smoky dark glow (wide, wide, tight) so it reads over a lit room, then crisp ink.
+    // Glow passes draw the glyphs off-canvas and only their shadow lands on it.
+    for (const blur of [fontPx * 0.7, fontPx * 0.7, fontPx * 0.18, 0]) {
+      const off = blur > 0 ? CARD_W * 2 : 0;
       g.shadowBlur = blur;
+      g.shadowOffsetX = off;
       for (const r of rows) {
         g.globalAlpha = r.sub ? 0.72 : 1;
         g.font = `${r.sub ? fontPx * SUB_SCALE : fontPx}px ${family}`;
-        g.fillText(r.text, CARD_W / 2, r.y);
+        g.fillText(r.text, CARD_W / 2 - off, r.y);
       }
     }
     g.globalAlpha = 1;
     g.shadowBlur = 0;
+    g.shadowOffsetX = 0;
     this.texture.needsUpdate = true;
   }
 }
@@ -389,7 +411,10 @@ export class ScrawlLabel {
   private fontsChanged = false;
   private alpha = 0;
   private target = 0;
+  /** 0..1 writing progress, swept across the text's own extent [revealFrom, revealTo] (UV x). */
   private reveal = 0;
+  private revealFrom = 0;
+  private revealTo = 1;
   private lifeSec = 0;
   private boilSec = 0;
   private roll = 0;
@@ -461,7 +486,7 @@ export class ScrawlLabel {
     if (this.lifeSec <= 0) this.target = 0;
     const fade = CONFIG.text.scrawlFadeSec;
     this.alpha = this.alpha < this.target ? Math.min(1, this.alpha + dt / fade) : Math.max(this.target, this.alpha - dt / fade);
-    this.reveal = Math.min(1.06, this.reveal + (dt * 1.06) / CONFIG.text.scrawlWriteSec);
+    this.reveal = Math.min(1, this.reveal + dt / CONFIG.text.scrawlWriteSec);
 
     head.getWorldPosition(this.headPos);
     const dist = Math.max(0.2, this.headPos.distanceTo(this.anchor));
@@ -484,7 +509,7 @@ export class ScrawlLabel {
 
     const u = this.material.uniforms;
     u.uOpacity.value = smooth01(this.alpha) * CONFIG.text.scrawlOpacity * this.flick;
-    u.uReveal.value = this.reveal;
+    u.uReveal.value = this.revealFrom + (this.revealTo + 0.06 - this.revealFrom) * this.reveal;
     this.mesh.visible = this.alpha > 0.001;
   }
 
@@ -515,6 +540,8 @@ export class ScrawlLabel {
     const rnd = seeded(seed);
     const total = g.measureText(this.text).width;
     let x = (SCRAWL_W - total) / 2;
+    this.revealFrom = x / SCRAWL_W;
+    this.revealTo = (x + total) / SCRAWL_W;
     for (const ch of this.text) {
       const adv = g.measureText(ch).width;
       g.save();
