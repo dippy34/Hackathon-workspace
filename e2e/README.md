@@ -9,7 +9,8 @@ no door, so the door placement fallback gets exercised).
 npx vite --port 8195 --strictPort &       # dev server with IWER
 node e2e/smoke.mjs                        # title -> mic -> XR -> calibration -> placement -> night 1
 node e2e/caught.mjs                       # each threat catches you; the night restarts
-node e2e/full-run.mjs                     # all 5 nights with an ideal-player autopilot (~25 min)
+node e2e/full-run.mjs                     # all 5 nights with an ideal-player autopilot (~13 min)
+node e2e/resume.mjs                       # leave XR mid-night / after surviving, re-enter
 ```
 
 `autopilot.mjs` poses the emulated hands from the director's live state: hands
