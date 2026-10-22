@@ -1,6 +1,6 @@
 // Renders each monster for review: in the night darkness, at low and full danger,
 // from the seated player's view and close up, plus frames of its caught moment.
-// Usage: (dev server on 8195) node e2e/showcase.mjs  -> e2e/out/show-*.png
+// Usage: (dev server on 8195) SHOW=underDesk,peeker node e2e/showcase.mjs  -> e2e/out/show-*.png
 import { launch, quat, until, sleep } from './harness.mjs';
 import { enterAndCalibrate } from './flow.mjs';
 
@@ -35,7 +35,8 @@ try {
   // Hands resting on the desk for context.
   await page.evaluate((q) => { __e2e.hand('left', [-0.18, 0.75, -0.4], q, 'default'); __e2e.hand('right', [0.18, 0.75, -0.4], q, 'default'); }, quat(0, -30));
 
-  for (const id of ['underDesk', 'peeker', 'knocker']) {
+  const ids = (process.env.SHOW || 'underDesk,peeker,knocker').split(',');
+  for (const id of ids) {
     // Start an attack by hand and keep feeding it a meter value.
     const target = await page.evaluate((id) => {
       const d = window.__holdStill.director, P = d.threats[id];
@@ -55,6 +56,12 @@ try {
     await page.evaluate(() => (window.__showAttack.meter = 0.97));
     await sleep(6000);
     await snap(`${id}-2-full-danger`);
+    // Re-read the target: the Peeker's face drifts toward the room as danger rises.
+    target.splice(0, 3, ...(await page.evaluate((id) => {
+      const P = window.__holdStill.director.threats[id];
+      const v = id === 'peeker' ? P.facePos : id === 'knocker' ? P.doorTarget : P.root.getWorldPosition(P.root.position.clone());
+      return [v.x, v.y, v.z];
+    }, id)));
     // Close-up (for Under the Desk: crouch to see under the desk).
     const close = id === 'underDesk' ? [target[0], target[1] + 0.05, target[2] + 0.75] : toward(target, 0.9);
     await look(close, target);
