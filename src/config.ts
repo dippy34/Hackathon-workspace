@@ -347,8 +347,37 @@ export const CONFIG = {
       withdrawSec: 0.9,
       /** impl: seconds for the caught hand to lunge from under the desk to the face. */
       lungeSec: 0.35,
-      /** impl: the caught hand stops this far in front of the eyes (m; comfort). */
-      lungeFaceDistM: 0.15,
+      /**
+       * impl: the caught hand's knuckles stop this far in front of the eyes (m; comfort). The smother
+       * pose arcs the fingers up and out past the view instead of folding them back at the eyes, so
+       * with smotherPushM and lungeScale every part of the hand stays >= 10 cm from the eyes
+       * (camera near 0.02 m; the rule is >= 5 cm).
+       */
+      lungeFaceDistM: 0.16,
+      /** impl: while the caught fingers close, the palm presses this much closer still (m). */
+      smotherPushM: 0,
+      /**
+       * impl: the caught hand comes up from this far below eye level (m), so its hooked
+       * fingertips and nails close right in front of the eyes instead of above the view.
+       */
+      lungeDropM: 0.11,
+      /** impl: the caught hand grows by this factor on its way to the face (the palm fills most of the view). */
+      lungeScale: 1.4,
+      /** impl: hand colour scale in the dark (only top-facing knuckles, nails and the rim catch light)... */
+      darkBrightness: 0.13,
+      /** impl: ...and in the flashlight beam (its shading also turns frontal: the beam is the reveal). */
+      litBrightness: 1.1,
+      /** impl: the 'desk shadow': below the desk surface the hand fades to black over this depth (m)... */
+      shadeDepthM: 0.1,
+      /** impl: ...and is at full value this far above the surface (m). */
+      shadeLiftM: 0.005,
+      /** impl: the beam pushes that shadow this much deeper under the desk (m). */
+      shadeLitDropM: 0.08,
+      /**
+       * impl: the hand's darkest tone (sRGB hex): what the forearm fade, the desk shadow and the fade
+       * in/out sink into. About the darkness shell's own colour, so only a faint silhouette remains.
+       */
+      shadowColor: 0x0a0d12,
       /** impl: seconds for the eyes under the desk to fade in when it arrives. */
       eyeFadeInSec: 1.2,
       /** impl: gain of the caught 'grab' one-shot. */
@@ -364,16 +393,46 @@ export const CONFIG = {
       /** impl: face brightness in the dark (faint self-glow) and when caught in the beam. */
       darkBrightness: 0.3,
       litBrightness: 1.0,
+      /** impl: dark brightness at a zero meter (it surfaces to darkBrightness as it comes in; the teaching pass stays at darkBrightness). */
+      darkBrightnessFar: 0.18,
+      /** impl: opacity factor while the face is behind the glass (hazy, more ghost than object); 1 once inside. */
+      glassHaze: 0.35,
+      /** impl: head tilt amplitude (rad) at a low meter, leaning to headLeanRad (inhuman) at a full meter. */
+      headTiltRad: 0.06,
+      headLeanRad: 0.32,
+      /** impl: a rare (~every 2-3 s), ~60 ms micro-twitch of the head (rad). */
+      twitchRad: 0.07,
       /** impl: seconds for the face to pull back outside and fade when it leaves. */
       retreatSec: 1.1,
       /** impl: seconds for the face to fade in outside the window when it arrives. */
       fadeInSec: 1.4,
       /** impl: seconds for the face to rush at the player's head when caught. */
       rushSec: 0.4,
-      /** impl: the rushing face stops this far in front of the eyes (m; comfort). */
+      /** impl: the rushing face's surface stops this far in front of the eyes (m; comfort). */
       rushFaceDistM: 0.17,
+      /** impl: the rushing face grows by this factor on its way in. */
+      rushGrow: 1.2,
+      /** impl: on arrival the face punches this far past the stop (m, peak) and springs back. */
+      rushPunchM: 0.015,
+      /** impl: through the rest of the caught moment it creeps this much closer (m)... */
+      rushCreepM: 0.025,
+      /** impl: ...its jaw keeps dropping past full (scream morph overdrive, <= SCREAM_MAX 1.25)... */
+      rushScreamMax: 1.2,
+      /** impl: ...and its head snaps to a cant (rad) about 0.5 s in. */
+      rushCantRad: 0.3,
+      /** impl: caught face brightness (keeps the baked form; never over-exposed) and the strobe it drops to for a frame or two. */
+      rushBrightness: 0.8,
+      rushStrobeLow: 0.15,
       /** impl: gain of the caught 'faceRush' one-shot. */
       faceRushGain: 1.2,
+      /** impl: scale of the sculpted face (built at real size, ~0.18 m wide): a little too large for a person. */
+      faceScale: 1.1,
+      /** impl: how far the head turns away from the beam when it flinches (rad); the chin dips by half that. */
+      flinchTurnRad: 0.2,
+      /** impl: the jaw starts to hang slack at this (smoothed) meter... */
+      screamFromMeter: 0.35,
+      /** impl: ...and is this open (0..1) at a full meter. It opens fully (and past full) when caught. */
+      screamAtFullMeter: 0.45,
     },
     knocker: {
       /** impl: height above the floor (m) of the door's sound (handle height). */

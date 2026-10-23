@@ -2,32 +2,33 @@
  * The Thing Under the Desk (DESIGN.md). Counter (LOCKED): both hands flat.
  *
  * Warning: fingernails on wood from under the desk, near the player's knees.
- * Mostly unseen: two small pale eyes low under the desk's near edge and, as
- * the meter rises, four long bony fingers that curl up over the near edge and
- * creep onto the desk between the player's hands. Countered: the fingers
- * twitch, tremble and slowly slide back down; the scratching nearly stops
- * (its loop is ducked to threatFx.counterDuck).
- * Leave: they withdraw, deskRetreat. Caught: a pale hand lunges up at the face
- * (~0.35 s) with a 'grab' on the over-bus, then the director cuts to black.
+ * Mostly unseen: two small pale eyes looking up from the dark gap at the
+ * knees and, as the meter rises, four long bony fingers that crest the near
+ * edge one after another and walk onto the desk between the player's hands.
+ * Below the desk surface the hand sinks into black (the 'desk shadow'), and in
+ * the dark only its top-facing knuckles, nails and rim catch any light; the
+ * flashlight is the reveal. Countered: the fingers twitch, tremble and slowly
+ * slide back down; the scratching nearly stops (ducked to threatFx.counterDuck).
+ * Leave: they withdraw, deskRetreat. Caught: the hand lunges up out of the dark
+ * at the face (~0.35 s) with a 'grab' on the over-bus, its long fingers spread
+ * past the edges of the view and close over the eyes as it goes dark, then the
+ * director cuts to black.
  *
- * Everything is built once in init() (about 20 tiny unlit meshes sharing one
- * material) and reused for every attack.
+ * Everything is built once in init() (the creature-hand rig: 16 unlit opaque
+ * meshes sharing one baked-vertex-colour material, faded with its colour) and
+ * reused for every attack.
  */
 
-import {
-  CylinderGeometry,
-  Group,
-  Mesh,
-  MeshBasicMaterial,
-  Object3D,
-  Quaternion,
-  SphereGeometry,
-  Vector3,
-  type World,
-} from '@iwsdk/core';
+import { Group, type MeshBasicMaterial, Object3D, Quaternion, Vector3, type World } from '@iwsdk/core';
 import { CONFIG } from '../config.js';
 import type { AttackView } from '../core/types.js';
 import type { FrameContext, ThreatPresenter } from '../game/contracts.js';
+import {
+  type CreatureHandRig,
+  FINGER_SPLAY,
+  createCreatureHand,
+  setCreatureHandShade,
+} from '../scene-assets/creature-hand.scene-asset.js';
 import {
   GlowingEyes,
   LoopSlot,
@@ -45,7 +46,6 @@ import {
   orientToForward,
   pointInFrontOfHead,
   randRange,
-  shadeGeometry,
   smoothstep,
   wobble,
 } from './common.js';
@@ -54,40 +54,63 @@ const FX = CONFIG.threatFx.underDesk;
 
 type Mode = 'idle' | 'active' | 'leaving' | 'caught';
 
-// ─── Hand model (metres, hand-local: +Y = fingers, +Z = back of the hand) ──
+// ─── Hand poses (hand-local: +Y = fingers, +Z = back of the hand) ─────────
 
-/** Phalanx lengths: proximal, middle, distal. Deliberately too long. */
-const SEG_LEN = [0.068, 0.05, 0.036] as const;
-const SEG_RADIUS = [0.0076, 0.0066, 0.0056] as const;
-/** Index → pinky along the knuckle line. The thumb sits on the -X side. */
-const FINGER_X = [-0.031, -0.0105, 0.0105, 0.03] as const;
-const FINGER_SCALE = [0.95, 1.07, 1.0, 0.8] as const;
-const FINGER_SPLAY = [-0.07, -0.022, 0.025, 0.08] as const;
-const FINGER_PHASE = [0, 1.9, 3.7, 5.2] as const;
-const THUMB_LEN = [0.044, 0.033] as const;
-const THUMB_RADIUS = [0.0086, 0.0071] as const;
+// The model and its joint contract (fingers[i][k], thumb[k], FINGER_SPLAY, ...)
+// live in src/scene-assets/creature-hand.scene-asset.ts.
 
 // Joint curls (rad; negative curls over the desk, away from the player).
 const POSE_UP = [0.0, -0.12, -0.15] as const;
+/** Cresting the edge from below: the proximal phalanges stand in front of the edge, the rest curl over onto the wood. */
+const POSE_CREST = [-0.15, -1.2, -0.7] as const;
 const POSE_HOOK = [-1.25, -0.55, -0.38] as const;
-/** Full reach: the hand has pulled itself up over the edge and the long fingers lie almost straight across the desk. */
-const POSE_REACH = [-1.28, -0.1, -0.08] as const;
-const POSE_SPREAD = [-0.12, -0.18, -0.12] as const;
-const POSE_GRAB = [-0.75, -0.95, -0.7] as const;
-/** Creep progress at which the fingers are hooked over the edge. */
+/** Full reach: an arched 'spider' grip; the middle knuckles stand high and the nails dig into the wood. */
+const POSE_REACH = [-1.05, -0.75, -0.35] as const;
+/** The lunge: a hooked claw reaching for your face, knuckles back and nails toward you. */
+const POSE_CLAW = [0.15, -0.9, -0.75] as const;
+/** The smother: the long fingers arc out past the edges of the view instead of folding back at the eyes. */
+const POSE_GRAB = [-0.1, -0.8, -0.5] as const;
+/** Caught spread, in multiples of the rest FINGER_SPLAY, outward (FINGER_SPLAY draws the tips together, hence negative). */
+const GRAB_SPLAY = -5;
+/** Creep progress at which the fingers have crested the edge (knuckles still down in the dark)... */
+const CREST_AT = 0.3;
+/** ...the knuckle height then (m, relative to the desk surface)... */
+const CREST_HY = -0.06;
+/** ...and the progress at which the hand has pulled itself up and hooked over the edge. */
 const HOOK_AT = 0.55;
+/** Knuckle height above the desk surface at full reach (m): the arch puts the nails on the wood. */
+const REACH_HY = 0.062;
+/** Per-finger lag of the creep (index leads, the pinky arrives last and stays a little behind). */
+const FINGER_LAG = [0, 0.05, 0.1, 0.16] as const;
+/** Per-finger joint bias (rad) so no two fingers share a pose. */
+const FINGER_BIAS = [
+  [0.04, -0.12, 0.04],
+  [0.06, 0, 0],
+  [-0.02, 0.12, -0.08],
+  [0.1, -0.25, -0.2],
+] as const;
+/** Extra splay at full reach (rad, outward is against FINGER_SPLAY's sign): the outer fingers spread, the pinky out to ~0.16. */
+const REACH_SPLAY = [0.05, 0.01, -0.04, -0.24] as const;
+/** The walk: one finger at a time lifts (slot order index, ring, middle, pinky) while the others press. */
+const WALK_SLOT = [0, 2, 1, 3] as const;
+const WALK_PERIOD_SEC = 2.0;
+/** Fraction of the cycle a finger is lifted (a little overlap between neighbours). */
+const WALK_LIFT = 0.3;
 
 export class UnderDeskThreat implements ThreatPresenter {
   readonly id = 'underDesk' as const;
   readonly teachingHint = 'Hands flat.';
 
   private root!: Group;
+  private rig!: CreatureHandRig;
   private hand!: Group;
   private aimer!: Object3D;
   private mat!: MeshBasicMaterial;
   private eyes!: GlowingEyes;
-  private readonly fingers: Object3D[][] = [];
-  private readonly thumb: Object3D[] = [];
+  /** rig.fingers[i][k]: index..pinky, proximal..distal joints. */
+  private fingers: Object3D[][] = [];
+  /** rig.thumb[k]: proximal, distal joints. */
+  private thumb: Object3D[] = [];
 
   private readonly scratch = new LoopSlot();
   private readonly voice = new VoiceSlot();
@@ -117,6 +140,8 @@ export class UnderDeskThreat implements ThreatPresenter {
   private leaveStartFade = 0;
 
   private readonly pose = [0, 0, 0];
+  /** Finger joint angles when caught (per finger: 3 curls, then the splay). */
+  private readonly grabFrom = new Float32Array(16);
   private readonly edge = new Vector3();
   private readonly toward = new Vector3();
   private readonly voicePos = new Vector3();
@@ -131,14 +156,17 @@ export class UnderDeskThreat implements ThreatPresenter {
     world.createTransformEntity(this.root, { persistent: true });
     this.root.visible = false;
 
-    this.mat = new MeshBasicMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: 0,
-      depthWrite: true,
-    });
-    this.hand = this.buildHand();
-    this.root.add(this.hand);
+    // The rig's own root stays at identity under this.root, so the hand's parent
+    // frame is this.root's (lunge maths and the aimer rely on that).
+    const rig = createCreatureHand({ renderOrder: RENDER_ORDER.body });
+    this.rig = rig;
+    this.mat = rig.material;
+    rig.shade.uHsFloor.value.set(FX.shadowColor);
+    rig.shade.uHsFade.value = 0;
+    this.hand = rig.hand;
+    this.fingers = rig.fingers;
+    this.thumb = rig.thumb;
+    this.root.add(rig.root);
 
     this.aimer = new Object3D();
     this.root.add(this.aimer);
@@ -171,7 +199,9 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.modeT = 0;
     this.mode = 'active';
     this.sync(attack);
-    this.mat.opacity = 0;
+    this.rig.shade.uHsFade.value = 0;
+    this.rig.shade.uHsLit.value = 0;
+    this.mat.color.setScalar(FX.darkBrightness);
     this.poseCreep(0, 0, 0);
     this.eyes.set(0);
     this.root.visible = true;
@@ -211,10 +241,19 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.hand.scale.setScalar(1);
     this.lungeStart.copy(this.hand.position);
     this.lungeStartQ.copy(this.hand.quaternion);
+    // The fingers fly open from wherever they are.
+    for (let i = 0; i < 4; i++) {
+      const j = this.fingers[i];
+      const f = i * 4;
+      this.grabFrom[f] = j?.[0]?.rotation.x ?? 0;
+      this.grabFrom[f + 1] = j?.[1]?.rotation.x ?? 0;
+      this.grabFrom[f + 2] = j?.[2]?.rotation.x ?? 0;
+      this.grabFrom[f + 3] = j?.[0]?.rotation.z ?? FINGER_SPLAY[i] ?? 0;
+    }
     this.mode = 'caught';
     this.modeT = 0;
-    this.mat.opacity = 1;
-    this.mat.color.setScalar(1.2);
+    this.rig.shade.uHsFade.value = 1;
+    this.mat.color.setScalar(1);
     this.root.visible = true;
 
     this.root.localToWorld(this.tmpA.copy(this.hand.position));
@@ -271,11 +310,14 @@ export class UnderDeskThreat implements ThreatPresenter {
 
     this.poseCreep(this.p, this.counterBlend, this.twitch);
 
-    // Fake flashlight: the bone brightens in the beam, eyeshine flares.
+    // Fake flashlight: in the beam the bone brightens, the shading turns frontal and the
+    // desk shadow pulls back under the desk (the reveal); eyeshine flares.
     this.lit = damp(this.lit, this.inBeam(ctx, this.hand) ? 1 : 0, 10, dt);
     this.eyeLit = damp(this.eyeLit, this.inBeam(ctx, this.eyes.group) ? 1 : 0, 10, dt);
-    this.mat.opacity = this.fade;
-    this.mat.color.setScalar(lerp(0.62, 1.15, this.lit));
+    this.mat.color.setScalar(lerp(FX.darkBrightness, FX.litBrightness, this.lit));
+    this.rig.shade.uHsFade.value = this.fade;
+    this.rig.shade.uHsLit.value = this.lit;
+    this.setShade(this.edge.y - FX.shadeLitDropM * this.lit);
 
     const cb = this.counterBlend;
     const eyeI =
@@ -296,7 +338,8 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.p = this.leaveStartP * (1 - slide);
     this.poseCreep(this.p, 1, this.twitch);
     this.hand.position.y -= slide * 0.08;
-    this.mat.opacity = this.leaveStartFade * (1 - smoothstep(0.35, 1, t));
+    // It sinks into the desk shadow and into the dark (uHsFade, not opacity: the material is opaque).
+    this.rig.shade.uHsFade.value = this.leaveStartFade * (1 - smoothstep(0.35, 1, t));
     this.eyeFade = Math.max(0, this.eyeFade - dt / 0.45);
     this.updateEyes(ctx, dt, this.eyeFade * 0.4, 0.3);
     if (t >= 1) this.hideVisuals();
@@ -307,16 +350,20 @@ export class UnderDeskThreat implements ThreatPresenter {
     const u = this.modeT / FX.lungeSec;
     const t = clamp01(u);
     const e = easeOutCubic(t);
+    // A clawed reach through the lunge; the claw closes over the face right up to the cut to black.
+    const g = smoothstep(1.1, 2.2, u);
 
-    // Lunge target: just in front of the eyes, a little low (root-local).
-    pointInFrontOfHead(ctx.headPos, ctx.headForward, FX.lungeFaceDistM, -0.03, this.tmpB);
+    // Lunge target: just in front of the eyes, a little low (root-local); the palm presses in as it closes.
+    pointInFrontOfHead(ctx.headPos, ctx.headForward, FX.lungeFaceDistM - FX.smotherPushM * g, -FX.lungeDropM, this.tmpB);
     this.root.worldToLocal(this.tmpA.copy(this.tmpB));
     const hold = smoothstep(0.9, 1.2, u);
     const shake = 0.004 * hold;
     this.hand.position.lerpVectors(this.lungeStart, this.tmpA, e);
     this.hand.position.x += jitter(this.time, 4, 21) * shake;
     this.hand.position.y += Math.sin(Math.PI * t) * 0.06 + jitter(this.time, 5, 19) * shake;
-    this.hand.scale.setScalar(lerp(1, 1.2, e));
+    this.hand.scale.setScalar(lerp(1, FX.lungeScale, e));
+    // It rises out of the desk shadow, which then sinks away so the whole lunge stays visible.
+    this.setShade(this.edge.y - 1.0 * smoothstep(0.2, 1, t));
 
     // Palm toward the face: aim the back of the hand (+Z) away from the head.
     this.root.localToWorld(this.tmpB.copy(this.hand.position));
@@ -325,22 +372,32 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.aimer.lookAt(this.tmpB);
     this.hand.quaternion.slerpQuaternions(this.lungeStartQ, this.aimer.quaternion, smoothstep(0, 0.6, t));
 
-    // Fingers fly open, then close on the face.
-    const g = smoothstep(0.85, 1.6, u);
+    // Fingers hook into a wide claw, then close over the face (a smother, not a fist).
+    const open = smoothstep(0, 0.45, t);
     const pose = this.pose;
-    for (let k = 0; k < 3; k++) pose[k] = lerp(POSE_SPREAD[k] ?? 0, POSE_GRAB[k] ?? 0, g);
+    for (let k = 0; k < 3; k++) pose[k] = lerp(POSE_CLAW[k] ?? 0, POSE_GRAB[k] ?? 0, g);
     for (let i = 0; i < 4; i++) {
       const j = this.fingers[i];
-      if (!j) continue;
+      const b = FINGER_BIAS[i];
+      if (!j || !b) continue;
       const tw = 0.12 * jitter(this.time, i * 5.3, 15) * (1 - g * 0.5);
-      j[0]?.rotation.set(pose[0]! + tw * 0.4, 0, (FINGER_SPLAY[i] ?? 0) * 3.2);
-      if (j[1]) j[1].rotation.x = pose[1]! + tw;
-      if (j[2]) j[2].rotation.x = pose[2]! + tw * 0.8;
+      const f = i * 4;
+      const from = this.grabFrom;
+      j[0]?.rotation.set(
+        lerp(from[f]!, pose[0]! + 0.5 * b[0] * g + tw * 0.4, open),
+        0,
+        lerp(from[f + 3]!, (FINGER_SPLAY[i] ?? 0) * lerp(GRAB_SPLAY, 0.7 * GRAB_SPLAY, g), open),
+      );
+      if (j[1]) j[1].rotation.x = lerp(from[f + 1]!, pose[1]! + 0.5 * b[1] * g + tw, open);
+      if (j[2]) j[2].rotation.x = lerp(from[f + 2]!, pose[2]! + 0.5 * b[2] * g + tw * 0.8, open);
     }
-    this.setThumb(lerp(-1.45, -0.45, e) - g * 0.4, lerp(0.35, 1.0, e));
+    // The thumb stays tucked and opposes toward the palm and the face (never out sideways).
+    this.setThumb(lerp(-1.45, -1.3, e) - g * 0.3, 0.35 - g * 0.2);
 
-    this.mat.opacity = 1;
-    this.mat.color.setScalar(1.2 + 0.08 * jitter(this.time, 9, 30));
+    // Filling the view it takes the flat frontal response (no top-light two-tone across the
+    // curled fingers), then darkens as it covers you: the cut to black reads as the hand over your eyes.
+    this.rig.shade.uHsLit.value = Math.max(this.rig.shade.uHsLit.value, smoothstep(0, 0.5, t));
+    this.mat.color.setScalar(lerp(1.0, 0.3, g) + 0.08 * jitter(this.time, 9, 30));
     this.eyeFade = Math.max(0, this.eyeFade - dt / 0.1);
     this.updateEyes(ctx, dt, this.eyeFade * 0.6, 1);
 
@@ -379,27 +436,33 @@ export class UnderDeskThreat implements ThreatPresenter {
     orientToForward(this.root, this.toward);
     this.root.updateMatrixWorld(true);
     this.hasFrame = true;
+    this.setShade(this.edge.y);
+  }
+
+  /** The desk shadow at world height y (the desk surface, or lower to reveal more). */
+  private setShade(y: number): void {
+    setCreatureHandShade(this.rig, y, FX.shadeDepthM, FX.shadeLiftM);
   }
 
   /** Pose the fingers for creep progress p (0 under the desk .. 1 reaching onto it). */
   private poseCreep(p: number, cb: number, tw: number): void {
     const t = this.time;
-    const pose = this.pose;
     let hy: number;
     let hz: number;
     let pitch: number;
-    if (p < HOOK_AT) {
-      const k = easeInOutSine(p / HOOK_AT);
-      for (let i = 0; i < 3; i++) pose[i] = lerp(POSE_UP[i] ?? 0, POSE_HOOK[i] ?? 0, k);
-      hy = lerp(-0.175, 0.016, easeOutCubic(p / HOOK_AT));
-      hz = 0.014;
+    if (p < CREST_AT) {
+      hy = lerp(-0.175, CREST_HY, p / CREST_AT);
+      hz = 0.006;
+      pitch = 0;
+    } else if (p < HOOK_AT) {
+      hy = lerp(CREST_HY, 0.016, easeInOutSine((p - CREST_AT) / (HOOK_AT - CREST_AT)));
+      hz = 0.006;
       pitch = 0;
     } else {
       const k = (p - HOOK_AT) / (1 - HOOK_AT);
-      for (let i = 0; i < 3; i++) pose[i] = lerp(POSE_HOOK[i] ?? 0, POSE_REACH[i] ?? 0, k);
       // Knuckles rise over the edge; the back of the hand tilts toward the player (pulling itself up).
-      hy = lerp(0.016, 0.05, k);
-      hz = lerp(0.014, 0.004, k);
+      hy = lerp(0.016, REACH_HY, k);
+      hz = lerp(0.006, 0, k);
       pitch = lerp(0, -0.45, k);
     }
 
@@ -412,19 +475,49 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.hand.rotation.set(pitch, 0, 0.08 + wobble(t * 0.4, 3) * 0.03);
     this.hand.scale.setScalar(1);
 
-    // Feeling the surface; pressing and trembling while held off; a jolt on the counter.
-    const crawl = 0.11 * smoothstep(0.3, 0.75, p) * (1 - 0.75 * cb);
+    // The walk: one finger at a time lifts while the others press their nails into the wood;
+    // trembling while held off; a jolt on the counter. Each finger runs its own lagged creep.
+    const walk = smoothstep(0.3, 0.75, p) * (1 - 0.75 * cb);
+    const cyc = t / WALK_PERIOD_SEC;
+    const bias = smoothstep(0.1, 0.5, p);
+    const pose = this.pose;
     for (let i = 0; i < 4; i++) {
       const j = this.fingers[i];
-      if (!j) continue;
-      const c = crawl * Math.sin(t * 2.4 + (FINGER_PHASE[i] ?? 0));
+      const b = FINGER_BIAS[i];
+      if (!j || !b) continue;
+      const reach = this.creepPose(Math.max(0, p - (FINGER_LAG[i] ?? 0)));
+      let ph = cyc + (WALK_SLOT[i] ?? 0) * 0.25;
+      ph -= Math.floor(ph);
+      const lift = ph < WALK_LIFT ? Math.sin((Math.PI * ph) / WALK_LIFT) : 0;
+      const up = 0.25 * walk * lift;
+      const press = 0.05 * walk * (1 - lift);
       const tremble = cb * 0.05 * jitter(t, i * 3.3 + 2, 11);
       const tws = tw * 0.24 * jitter(t, i * 7.1 + 1, 17);
-      j[0]?.rotation.set(pose[0]! + tws * 0.5 + tremble * 0.4, 0, FINGER_SPLAY[i] ?? 0);
-      if (j[1]) j[1].rotation.x = pose[1]! + c + tws + tremble;
-      if (j[2]) j[2].rotation.x = pose[2]! + c * 1.3 + tws * 0.8 + tremble;
+      const splay = (FINGER_SPLAY[i] ?? 0) + (REACH_SPLAY[i] ?? 0) * reach;
+      j[0]?.rotation.set(pose[0]! + b[0] * bias + up + tws * 0.5 + tremble * 0.4, 0, splay);
+      if (j[1]) j[1].rotation.x = pose[1]! + b[1] * bias - 0.4 * up - press + tws + tremble;
+      if (j[2]) j[2].rotation.x = pose[2]! + b[2] * bias - 0.3 * up - 1.3 * press + tws * 0.8 + tremble;
     }
     this.setThumb(-1.45, 0.35);
+  }
+
+  /** Joint curls for (one finger's) creep progress q into this.pose; returns how far into the reach (0..1) it is. */
+  private creepPose(q: number): number {
+    const pose = this.pose;
+    if (q < CREST_AT) {
+      // Straight up until the tips clear the edge, then they curl over it.
+      const k = smoothstep(0.3, 1, q / CREST_AT);
+      for (let i = 0; i < 3; i++) pose[i] = lerp(POSE_UP[i] ?? 0, POSE_CREST[i] ?? 0, k);
+      return 0;
+    }
+    if (q < HOOK_AT) {
+      const k = easeInOutSine((q - CREST_AT) / (HOOK_AT - CREST_AT));
+      for (let i = 0; i < 3; i++) pose[i] = lerp(POSE_CREST[i] ?? 0, POSE_HOOK[i] ?? 0, k);
+      return 0;
+    }
+    const k = (q - HOOK_AT) / (1 - HOOK_AT);
+    for (let i = 0; i < 3; i++) pose[i] = lerp(POSE_HOOK[i] ?? 0, POSE_REACH[i] ?? 0, k);
+    return k;
   }
 
   private setThumb(curl: number, out: number): void {
@@ -436,7 +529,8 @@ export class UnderDeskThreat implements ThreatPresenter {
 
   private updateEyes(ctx: FrameContext, dt: number, intensity: number, squint: number): void {
     const g = this.eyes.group;
-    g.position.set(this.eyeX, lerp(-0.4, -0.25, this.p), lerp(-0.13, -0.07, this.p));
+    // In front of the edge and low: looking up out of the dark gap at the knees.
+    g.position.set(this.eyeX, lerp(-0.3, -0.18, this.p), lerp(0.03, 0.05, this.p));
     g.lookAt(ctx.headPos);
     this.eyes.set(intensity, squint);
     this.eyes.update(dt);
@@ -460,7 +554,10 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.countering = false;
     this.wasCountering = false;
     if (this.root) this.root.visible = false;
-    if (this.mat) this.mat.opacity = 0;
+    if (this.rig) {
+      this.rig.shade.uHsFade.value = 0;
+      this.rig.shade.uHsLit.value = 0;
+    }
     this.eyes?.set(0);
     this.eyes?.update(0);
   }
@@ -470,71 +567,5 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.voice.release(fadeSec);
     this.overVoice.release(fadeSec);
     this.lingerLeft = 0;
-  }
-
-  /** Back of the hand, a forearm fading into the dark, four long fingers and a thumb. */
-  private buildHand(): Group {
-    const hand = new Group();
-    const key = new Vector3(0, 0.25, 1);
-    const segGeo = shadeGeometry(new CylinderGeometry(0.8, 1, 1, 6, 1).translate(0, 0.5, 0), PALETTE.bone, {
-      light: key,
-      min: 0.38,
-    });
-    const tipGeo = shadeGeometry(new CylinderGeometry(0.38, 1, 1, 6, 1).translate(0, 0.5, 0), PALETTE.bone, {
-      light: key,
-      min: 0.38,
-    });
-    const backGeo = shadeGeometry(
-      new SphereGeometry(1, 10, 8).scale(0.043, 0.05, 0.014).translate(0, -0.042, -0.002),
-      PALETTE.bone,
-      { light: key, min: 0.3 },
-    );
-    const armGeo = shadeGeometry(
-      new CylinderGeometry(0.021, 0.026, 0.34, 8, 4, true).translate(0, -0.25, -0.004),
-      PALETTE.bone,
-      { light: key, min: 0.25, fadeY: { opaqueY: -0.1, clearY: -0.36 } },
-    );
-
-    const back = new Mesh(backGeo, this.mat);
-    const arm = new Mesh(armGeo, this.mat);
-    back.renderOrder = RENDER_ORDER.body;
-    arm.renderOrder = RENDER_ORDER.body;
-    hand.add(back, arm);
-
-    for (let i = 0; i < 4; i++) {
-      const joints: Object3D[] = [];
-      let parent: Object3D = hand;
-      const s = FINGER_SCALE[i] ?? 1;
-      for (let k = 0; k < 3; k++) {
-        const joint = new Object3D();
-        if (k === 0) joint.position.set(FINGER_X[i] ?? 0, 0, 0);
-        else joint.position.y = (SEG_LEN[k - 1] ?? 0) * s;
-        parent.add(joint);
-        const seg = new Mesh(k === 2 ? tipGeo : segGeo, this.mat);
-        const r = SEG_RADIUS[k] ?? 0.006;
-        seg.scale.set(r, (SEG_LEN[k] ?? 0.04) * s, r * 0.9);
-        seg.renderOrder = RENDER_ORDER.body;
-        joint.add(seg);
-        joints.push(joint);
-        parent = joint;
-      }
-      this.fingers.push(joints);
-    }
-
-    let parent: Object3D = hand;
-    for (let k = 0; k < 2; k++) {
-      const joint = new Object3D();
-      if (k === 0) joint.position.set(-0.042, -0.048, 0.006);
-      else joint.position.y = THUMB_LEN[0];
-      parent.add(joint);
-      const seg = new Mesh(k === 1 ? tipGeo : segGeo, this.mat);
-      const r = THUMB_RADIUS[k] ?? 0.007;
-      seg.scale.set(r, THUMB_LEN[k] ?? 0.03, r * 0.9);
-      seg.renderOrder = RENDER_ORDER.body;
-      joint.add(seg);
-      this.thumb.push(joint);
-      parent = joint;
-    }
-    return hand;
   }
 }
