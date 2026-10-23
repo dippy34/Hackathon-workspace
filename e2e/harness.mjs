@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 
-export async function launch({ url = 'https://localhost:8195/?debug=1', outDir = path.join(here, 'out'), micRms = 0.003 } = {}) {
+export async function launch({ url = 'https://localhost:8195/?debug=1', outDir = path.join(here, 'out'), micRms = 0.003, video = null, viewport = { width: 640, height: 640 } } = {}) {
   fs.mkdirSync(outDir, { recursive: true });
   const wav = path.join(outDir, `mic-${micRms}.wav`);
   if (!fs.existsSync(wav)) execFileSync('node', [path.join(here, 'make-wav.mjs'), wav, String(micRms), '60']);
@@ -23,7 +23,7 @@ export async function launch({ url = 'https://localhost:8195/?debug=1', outDir =
       '--disable-renderer-backgrounding', '--no-sandbox',
     ],
   });
-  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 640, height: 640 }, permissions: ['microphone'] });
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport, permissions: ['microphone'], ...(video ? { recordVideo: { dir: video, size: viewport } } : {}) });
   const page = await context.newPage();
   const logs = [];
   page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
