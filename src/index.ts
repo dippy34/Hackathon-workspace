@@ -6,12 +6,12 @@ import { Director, DirectorSystem, directorRef } from './game/director.js';
 import { Mic } from './senses/mic.js';
 import { mountTitle } from './ui/title.js';
 
-/** ?debug=1 / ?debug=0 overrides the default (overlay on during development milestones). */
+/** ?debug=1 / ?debug=0 overrides the default (overlay on during development milestones; off in the desktop preview). */
 function debugEnabled(): boolean {
   const q = new URLSearchParams(location.search).get('debug');
   if (q === '1' || q === 'true') return true;
   if (q === '0' || q === 'false') return false;
-  return CONFIG.debug.overlayDefault;
+  return __HOLDSTILL_PREVIEW__ ? false : CONFIG.debug.overlayDefault;
 }
 
 async function main(): Promise<void> {
@@ -52,6 +52,11 @@ async function main(): Promise<void> {
     title.setResume(director.resumeText);
     title.show();
   };
+
+  // Desktop preview build only (constant-folded away, with src/preview/, from the Quest build).
+  if (__HOLDSTILL_PREVIEW__) {
+    void import('./preview/panel.js').then((m) => m.mountPreviewPanel(director));
+  }
 
   if (debug) {
     // Test/debug hook (emulator scripts): inspect state and jump between nights.

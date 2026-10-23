@@ -19,6 +19,10 @@ Open this link in the **Meta Quest Browser** on a Quest 3 / 3S. It redeploys aut
 
 Add `?debug=0` to hide the debug overlay, or `?debug=1` to force it on.
 
+**No headset?** Try the desktop preview in Chrome or Edge on a computer. It runs the real game in Meta's headset emulator (a virtual Quest 3 in a sample living room), with an autopilot that plays for you, a "let them catch you" mode, night jumps and a camera that follows the monsters:
+
+**https://raw.githack.com/dippy34/Hackathon-workspace/claude/stoic-brown-rb8ej1/site/preview/index.html**
+
 ## Develop
 
 ```sh
@@ -26,7 +30,7 @@ npm install
 npm run typecheck   # always before testing
 npm test            # rules engine: danger meter, fair scheduler, game flow (Node, no headset)
 npm run dev         # IWSDK dev server + IWER headset emulator (needs a display; see AGENTS.md)
-npm run build:site  # production build into site/ (CI does this on every push)
+npm run build:all   # Quest build into site/ + desktop preview into site/preview/ (CI does this on every push)
 ```
 
 - `src/config.ts`: every timing and tuning value (mirrors `docs/DESIGN.md`).

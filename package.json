@@ -14,7 +14,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
-    "build:site": "vite build --outDir site --emptyOutDir"
+    "build:site": "vite build --outDir site --emptyOutDir",
+    "build:preview": "HOLDSTILL_PREVIEW=1 vite build --outDir site/preview --emptyOutDir",
+    "build:all": "npm run build:site && npm run build:preview && node scripts/check-builds.mjs"
   },
   "dependencies": {
     "@iwsdk/core": "1.0.1",

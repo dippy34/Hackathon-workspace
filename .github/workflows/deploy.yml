@@ -1,6 +1,8 @@
-# Auto-deploy: every push builds the game into site/ and commits it back to the
+# Auto-deploy: every push builds the game into site/ (and the desktop preview,
+# with the IWER emulator, into site/preview/) and commits it back to the
 # same branch. The HTTPS link serves site/ straight from GitHub via githack:
 #   https://raw.githack.com/<owner>/<repo>/<branch>/site/index.html
+#   https://raw.githack.com/<owner>/<repo>/<branch>/site/preview/index.html  (desktop)
 # Optional: once GitHub Pages is enabled (Settings -> Pages -> Source: GitHub
 # Actions) and the repo variable PAGES_ENABLED=true is set, pushes to main also
 # publish to https://<owner>.github.io/<repo>/.
@@ -30,7 +32,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build:site
+      # build:site empties site/ (preview included), so it runs first; build:preview adds site/preview/.
+      - run: npm run build:all
       - name: Commit site/ if it changed
         run: |
           if [ -n "$(git status --porcelain -- site)" ]; then
