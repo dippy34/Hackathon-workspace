@@ -42,6 +42,12 @@ export interface PeekerFaceRig {
   eyeCenter: Vector3;
   /** Local size of the neutral skin (m): x width, y height, z depth. */
   size: Vector3;
+  /**
+   * Local z of the front of the neutral skin (m; its frontmost point), a stopping reference for
+   * anything that brings the face close. The skin geometry's bounding box is larger: it includes the
+   * morph extents (the scream's dropped jaw).
+   */
+  front: number;
 }
 
 export interface PeekerFaceOptions {
@@ -61,7 +67,10 @@ const GLINT_R_SCALE = 0.7;
 /** Glints fade out between these camera distances (m): only a close face has wet eyes. */
 const GLINT_NEAR_M = 1.0;
 const GLINT_FAR_M = 1.8;
-/** The scream morph may be overdriven (extrapolated) this far for the caught moment. */
+/**
+ * The scream morph may be overdriven (extrapolated) this far for the caught moment; the Peeker clamps
+ * CONFIG.threatFx.peeker.rushScreamMax to it.
+ */
 export const SCREAM_MAX = 1.25;
 const GLINT_COLOR = 0xe9e6d6;
 /** Glint opacity relative to the skin's opacity (it also brightens with the skin's colour). */
@@ -105,6 +114,7 @@ function delta(a: Float32Array, b: Float32Array): Float32Array {
 interface SkinBuild {
   geometry: BufferGeometry;
   size: Vector3;
+  front: number;
 }
 
 /** The sculpted head with neutral attributes and squint/scream morphs (position; colour via EXPR_SHADER). */
@@ -141,7 +151,8 @@ function buildSkin(): SkinBuild {
   }
   g.computeBoundingBox(); // includes the morph extents (the scream's dropped jaw)
   g.computeBoundingSphere();
-  return { geometry: g, size: hi.sub(lo) };
+  const front = hi.z;
+  return { geometry: g, size: hi.sub(lo), front };
 }
 
 /** A tiny soft disc (bright centre, black rim) for additive blending; faces +Z. */
@@ -171,7 +182,7 @@ export function createPeekerFace(options: PeekerFaceOptions = {}): PeekerFaceRig
   root.name = 'Face';
   const face = root;
 
-  const { geometry, size } = buildSkin();
+  const { geometry, size, front } = buildSkin();
   const material = new MeshBasicMaterial({
     vertexColors: true,
     transparent: true,
@@ -248,7 +259,7 @@ export function createPeekerFace(options: PeekerFaceOptions = {}): PeekerFaceRig
   setExpression(0, 0);
   syncGlint();
 
-  return { root, material, setExpression, skin, glints, glintMaterial, eyeCenter, size };
+  return { root, material, setExpression, skin, glints, glintMaterial, eyeCenter, size, front };
 }
 
 const prototype = createPeekerFace();

@@ -350,17 +350,50 @@ export const CONFIG = {
       /**
        * impl: the caught hand's knuckles stop this far in front of the eyes (m; comfort). The smother
        * pose arcs the fingers up and out past the view instead of folding them back at the eyes, so
-       * with smotherPushM and lungeScale every part of the hand stays >= 10 cm from the eyes
-       * (camera near 0.02 m; the rule is >= 5 cm).
+       * with lungeScale every visible part of the hand stays >= 5 cm (target >= 8 cm) from both eyes
+       * at any gaze yaw/pitch (camera near 0.02 m).
        */
       lungeFaceDistM: 0.16,
-      /** impl: while the caught fingers close, the palm presses this much closer still (m). */
-      smotherPushM: 0,
       /**
-       * impl: the caught hand comes up from this far below eye level (m), so its hooked
-       * fingertips and nails close right in front of the eyes instead of above the view.
+       * impl: the caught hand comes up from this far below eye level (m, along the gaze's own up, so a
+       * pitched gaze keeps the same framing), so its hooked fingertips and nails close right in front
+       * of the eyes instead of above the view.
        */
       lungeDropM: 0.11,
+      /** impl: the lunge arcs up by this much at its midpoint (m, along the gaze's own up). */
+      lungeArcM: 0.06,
+      /** impl: if the hand never came up, it lunges from this far below the desk edge (m)... */
+      lungeHiddenBelowM: 0.22,
+      /** impl: ...and this far in front of the edge, toward the player (m). */
+      lungeHiddenTowardM: 0.03,
+      /**
+       * impl: the lunge only starts where the hand is when it is ahead of the gaze: the cosine of its
+       * angle off the gaze, in 3D and in plan view, must be at least this. Otherwise (the player looking
+       * away from, or high over, the desk) a straight lunge would sweep through the head, so it starts
+       * lungeRestartAheadM ahead of and lungeRestartBelowM below the eyes instead (in the gaze's own
+       * frame: just out of view below it, about where a desk-facing lunge starts).
+       */
+      lungeAheadMinCos: 0.35,
+      /** impl: restart distance ahead of the eyes along the gaze (m), see lungeAheadMinCos... */
+      lungeRestartAheadM: 0.4,
+      /** impl: ...and below the eyes along the gaze's up (m). */
+      lungeRestartBelowM: 0.5,
+      /** impl: through the lunge the desk shadow sinks this far under the desk (m), so the whole lunge stays visible. */
+      lungeShadeSinkM: 1.0,
+      /**
+       * impl: the claw closes over the face from clawCloseFromLunges to clawClosedAtLunges lunge
+       * durations (lungeSec) into the caught moment. If that would end later than clawClosedByCutFrac of
+       * caught.cutToBlackSec, the whole close is scaled earlier (same proportions), so the claw is
+       * always closed before the cut to black whatever lungeSec is.
+       */
+      clawCloseFromLunges: 1.1,
+      clawClosedAtLunges: 2.2,
+      clawClosedByCutFrac: 0.9,
+      /** impl: caught hand brightness while it fills the view, dimming to caughtCoveredBrightness as the claw closes... */
+      caughtBrightness: 1.0,
+      caughtCoveredBrightness: 0.3,
+      /** impl: ...with this much brightness flicker (+-). */
+      caughtFlicker: 0.08,
       /** impl: the caught hand grows by this factor on its way to the face (the palm fills most of the view). */
       lungeScale: 1.4,
       /** impl: hand colour scale in the dark (only top-facing knuckles, nails and the rim catch light)... */
@@ -390,6 +423,28 @@ export const CONFIG = {
       fullInsideM: 0.6,
       /** impl: how far the face recoils while it is lit (m). */
       flinchRecoilM: 0.08,
+      /** impl: smoothing rate (1/s) of the meter the face follows through the glass. */
+      meterRate: 2.5,
+      /** impl: rates (1/s) at which the face lights up in the beam, flinches and recoils (both ways). */
+      litRate: 12,
+      flinchRate: 9,
+      recoilRate: 5,
+      /** impl: expression rates (1/s): the eyes snap shut, the mouth opens slowly, the caught scream is all but instant. */
+      squintRate: 10,
+      screamRate: 2.5,
+      rushExprRate: 16,
+      /** impl: the glass haze (glassHaze) clears as the face's depth goes from this (m, negative is outside)... */
+      hazeFromDepthM: -0.2,
+      /** impl: ...to this (m, just inside the glass). */
+      hazeToDepthM: 0.02,
+      /** impl: brightness factor at a zero meter, rising by meterBrightnessGain at a full meter... */
+      meterBrightnessBase: 0.9,
+      meterBrightnessGain: 0.2,
+      /** impl: ...and the teaching pass is this factor brighter still (findable at the window). */
+      teachingBoost: 1.15,
+      /** impl: breath-on-glass smear opacity while the face crosses the glass, and what lingers once it is through. */
+      smearCrossing: 0.13,
+      smearInside: 0.03,
       /** impl: face brightness in the dark (faint self-glow) and when caught in the beam. */
       darkBrightness: 0.3,
       litBrightness: 1.0,
@@ -400,8 +455,14 @@ export const CONFIG = {
       /** impl: head tilt amplitude (rad) at a low meter, leaning to headLeanRad (inhuman) at a full meter. */
       headTiltRad: 0.06,
       headLeanRad: 0.32,
-      /** impl: a rare (~every 2-3 s), ~60 ms micro-twitch of the head (rad). */
+      /** impl: the tilt starts becoming that lean at this smoothed meter. */
+      leanFromMeter: 0.4,
+      /** impl: a rare (~every 2-3 s), ~60 ms micro-twitch of the head (rad)... */
       twitchRad: 0.07,
+      /** impl: ...fired as value noise at twitchHz (changes/s) rises through twitchGateFrom..twitchGateTo (of 1). */
+      twitchGateFrom: 0.9,
+      twitchGateTo: 0.96,
+      twitchHz: 9,
       /** impl: seconds for the face to pull back outside and fade when it leaves. */
       retreatSec: 1.1,
       /** impl: seconds for the face to fade in outside the window when it arrives. */
@@ -410,19 +471,38 @@ export const CONFIG = {
       rushSec: 0.4,
       /** impl: the rushing face's surface stops this far in front of the eyes (m; comfort). */
       rushFaceDistM: 0.17,
+      /**
+       * impl: the rush only starts where the face is when it is ahead of the gaze: the cosine of its
+       * angle off the gaze, in 3D and in plan view, must be at least this. Otherwise (a window behind or
+       * beside the player, or a steep gaze) a straight rush would sweep through the head, so it starts
+       * rushRestartAheadM ahead instead.
+       */
+      rushAheadMinCos: 0.5,
+      /** impl: restart distance ahead of the head along the horizontal gaze, at eye height (m), see rushAheadMinCos. */
+      rushRestartAheadM: 1.2,
       /** impl: the rushing face grows by this factor on its way in. */
       rushGrow: 1.2,
-      /** impl: on arrival the face punches this far past the stop (m, peak) and springs back. */
+      /** impl: on arrival the face punches this far past the stop (m, peak) and springs back... */
       rushPunchM: 0.015,
+      /** impl: ...a damped spring of this angular rate (rad/s) and decay rate (1/s). */
+      rushPunchRadPerSec: 22,
+      rushPunchDecay: 6,
       /** impl: through the rest of the caught moment it creeps this much closer (m)... */
       rushCreepM: 0.025,
-      /** impl: ...its jaw keeps dropping past full (scream morph overdrive, <= SCREAM_MAX 1.25)... */
+      /**
+       * impl: ...its jaw keeps dropping past full to this scream-morph overdrive (1 = full; clamped to
+       * the face model's SCREAM_MAX, 1.25, in scene-assets/peeker-face.scene-asset.ts)...
+       */
       rushScreamMax: 1.2,
-      /** impl: ...and its head snaps to a cant (rad) about 0.5 s in. */
+      /** impl: ...and its head snaps to a cant (rad) rushCantAtSec after arrival (about 0.5 s in), over rushCantSnapSec. */
       rushCantRad: 0.3,
+      rushCantAtSec: 0.12,
+      rushCantSnapSec: 0.06,
       /** impl: caught face brightness (keeps the baked form; never over-exposed) and the strobe it drops to for a frame or two. */
       rushBrightness: 0.8,
       rushStrobeLow: 0.15,
+      /** impl: the strobe drops it to rushStrobeLow while a value noise (-1..1) is above this. */
+      rushStrobeAbove: 0.7,
       /** impl: gain of the caught 'faceRush' one-shot. */
       faceRushGain: 1.2,
       /** impl: scale of the sculpted face (built at real size, ~0.18 m wide): a little too large for a person. */

@@ -52,6 +52,16 @@ import {
 
 const FX = CONFIG.threatFx.underDesk;
 
+/**
+ * Caught: the claw closes over the face between these times (s into the caught moment), on the
+ * lunge's own timeline but scaled earlier if needed, so it is always closed before the cut to black.
+ */
+const CLAW_CLOSED_SEC = Math.min(
+  FX.clawClosedAtLunges * FX.lungeSec,
+  FX.clawClosedByCutFrac * CONFIG.caught.cutToBlackSec,
+);
+const CLAW_CLOSE_FROM_SEC = CLAW_CLOSED_SEC * (FX.clawCloseFromLunges / FX.clawClosedAtLunges);
+
 type Mode = 'idle' | 'active' | 'leaving' | 'caught';
 
 // ─── Hand poses (hand-local: +Y = fingers, +Z = back of the hand) ─────────
@@ -147,6 +157,10 @@ export class UnderDeskThreat implements ThreatPresenter {
   private readonly voicePos = new Vector3();
   private readonly lungeStart = new Vector3();
   private readonly lungeStartQ = new Quaternion();
+  /** The gaze's own up (world), see gazeUp(). */
+  private readonly upG = new Vector3();
+  /** Inverse of this.root's world rotation (world directions to root-local). */
+  private readonly rootQInv = new Quaternion();
   private readonly tmpA = new Vector3();
   private readonly tmpB = new Vector3();
 
@@ -235,12 +249,28 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.lingerLeft = 0;
     // Lunge from wherever the hand is; if it never came up, from under the desk.
     if (this.mode !== 'active' || this.p < 0.15) {
-      this.hand.position.set(this.handX, -0.22, 0.03);
+      this.hand.position.set(this.handX, -FX.lungeHiddenBelowM, FX.lungeHiddenTowardM);
       this.hand.rotation.set(0, 0, 0);
     }
     this.hand.scale.setScalar(1);
     this.lungeStart.copy(this.hand.position);
+    // A hand that is not ahead of the gaze, in 3D and in plan view (the player looking away from, or
+    // high over, the desk), would sweep through the head on its way to the face: it comes up out of
+    // view in front of them instead.
+    const fwd = ctx.headForward;
+    const r = this.root.localToWorld(this.tmpA.copy(this.lungeStart)).sub(ctx.headPos);
+    const minCos = FX.lungeAheadMinCos;
+    const ahead =
+      r.dot(fwd) >= minCos * r.length() &&
+      r.x * fwd.x + r.z * fwd.z >= minCos * Math.hypot(r.x, r.z) * Math.hypot(fwd.x, fwd.z);
+    if (!ahead) {
+      const upG = this.gazeUp(fwd, this.tmpB, ctx.head);
+      this.tmpA.copy(ctx.headPos).addScaledVector(fwd, FX.lungeRestartAheadM);
+      this.tmpA.addScaledVector(upG, -FX.lungeRestartBelowM);
+      this.lungeStart.copy(this.root.worldToLocal(this.tmpA));
+    }
     this.lungeStartQ.copy(this.hand.quaternion);
+    this.root.getWorldQuaternion(this.rootQInv).invert();
     // The fingers fly open from wherever they are.
     for (let i = 0; i < 4; i++) {
       const j = this.fingers[i];
@@ -253,7 +283,7 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.mode = 'caught';
     this.modeT = 0;
     this.rig.shade.uHsFade.value = 1;
-    this.mat.color.setScalar(1);
+    this.mat.color.setScalar(FX.caughtBrightness);
     this.root.visible = true;
 
     this.root.localToWorld(this.tmpA.copy(this.hand.position));
@@ -351,24 +381,31 @@ export class UnderDeskThreat implements ThreatPresenter {
     const t = clamp01(u);
     const e = easeOutCubic(t);
     // A clawed reach through the lunge; the claw closes over the face right up to the cut to black.
-    const g = smoothstep(1.1, 2.2, u);
+    const g = smoothstep(CLAW_CLOSE_FROM_SEC, CLAW_CLOSED_SEC, this.modeT);
 
-    // Lunge target: just in front of the eyes, a little low (root-local); the palm presses in as it closes.
-    pointInFrontOfHead(ctx.headPos, ctx.headForward, FX.lungeFaceDistM - FX.smotherPushM * g, -FX.lungeDropM, this.tmpB);
+    // Lunge target: just in front of the eyes, a little low in the gaze's own frame (root-local),
+    // arcing up (in the view, so never toward a down-turned face) on the way.
+    const upG = this.gazeUp(ctx.headForward, this.upG, ctx.head);
+    this.tmpB.copy(ctx.headPos).addScaledVector(ctx.headForward, FX.lungeFaceDistM);
+    this.tmpB.addScaledVector(upG, -FX.lungeDropM);
     this.root.worldToLocal(this.tmpA.copy(this.tmpB));
     const hold = smoothstep(0.9, 1.2, u);
     const shake = 0.004 * hold;
     this.hand.position.lerpVectors(this.lungeStart, this.tmpA, e);
+    this.tmpB.copy(upG).applyQuaternion(this.rootQInv);
+    this.hand.position.addScaledVector(this.tmpB, Math.sin(Math.PI * t) * FX.lungeArcM);
     this.hand.position.x += jitter(this.time, 4, 21) * shake;
-    this.hand.position.y += Math.sin(Math.PI * t) * 0.06 + jitter(this.time, 5, 19) * shake;
+    this.hand.position.y += jitter(this.time, 5, 19) * shake;
     this.hand.scale.setScalar(lerp(1, FX.lungeScale, e));
     // It rises out of the desk shadow, which then sinks away so the whole lunge stays visible.
-    this.setShade(this.edge.y - 1.0 * smoothstep(0.2, 1, t));
+    this.setShade(this.edge.y - FX.lungeShadeSinkM * smoothstep(0.2, 1, t));
 
     // Palm toward the face: aim the back of the hand (+Z) away from the head.
     this.root.localToWorld(this.tmpB.copy(this.hand.position));
     this.tmpB.multiplyScalar(2).sub(ctx.headPos);
     this.aimer.position.copy(this.hand.position);
+    // Roll to the gaze's up so the fingers always rise up the view, whatever the head's pitch.
+    this.aimer.up.copy(this.upG);
     this.aimer.lookAt(this.tmpB);
     this.hand.quaternion.slerpQuaternions(this.lungeStartQ, this.aimer.quaternion, smoothstep(0, 0.6, t));
 
@@ -397,7 +434,9 @@ export class UnderDeskThreat implements ThreatPresenter {
     // Filling the view it takes the flat frontal response (no top-light two-tone across the
     // curled fingers), then darkens as it covers you: the cut to black reads as the hand over your eyes.
     this.rig.shade.uHsLit.value = Math.max(this.rig.shade.uHsLit.value, smoothstep(0, 0.5, t));
-    this.mat.color.setScalar(lerp(1.0, 0.3, g) + 0.08 * jitter(this.time, 9, 30));
+    this.mat.color.setScalar(
+      lerp(FX.caughtBrightness, FX.caughtCoveredBrightness, g) + FX.caughtFlicker * jitter(this.time, 9, 30),
+    );
     this.eyeFade = Math.max(0, this.eyeFade - dt / 0.1);
     this.updateEyes(ctx, dt, this.eyeFade * 0.6, 1);
 
@@ -437,6 +476,16 @@ export class UnderDeskThreat implements ThreatPresenter {
     this.root.updateMatrixWorld(true);
     this.hasFrame = true;
     this.setShade(this.edge.y);
+  }
+
+  /**
+   * The gaze's own up (world up made perpendicular to `forward`) into `out`. Looking straight up or
+   * down it falls back to the head's own up axis, so it is never zero.
+   */
+  private gazeUp(forward: Vector3, out: Vector3, head: Object3D): Vector3 {
+    out.set(0, 1, 0).addScaledVector(forward, -forward.y);
+    if (out.lengthSq() < 1e-6) out.setFromMatrixColumn(head.matrixWorld, 1);
+    return out.normalize();
   }
 
   /** The desk shadow at world height y (the desk surface, or lower to reveal more). */

@@ -26,7 +26,7 @@ import { AdditiveBlending, Group, Mesh, MeshBasicMaterial, Vector3, type World }
 import { CONFIG } from '../config.js';
 import type { AttackView } from '../core/types.js';
 import type { FrameContext, RoomFeature, ThreatPresenter } from '../game/contracts.js';
-import { createPeekerFace, type PeekerFaceRig } from '../scene-assets/peeker-face.scene-asset.js';
+import { SCREAM_MAX, createPeekerFace, type PeekerFaceRig } from '../scene-assets/peeker-face.scene-asset.js';
 import {
   LoopSlot,
   PALETTE,
@@ -52,18 +52,13 @@ const FX = CONFIG.threatFx.peeker;
 
 type Mode = 'idle' | 'active' | 'leaving' | 'caught';
 
-/** Expression damping rates (1/s): the eyes snap shut, the mouth opens slowly, the scream is instant. */
-const SQUINT_RATE = 10;
-const SCREAM_RATE = 2.5;
-const RUSH_EXPR_RATE = 16;
-/** Caught arrival punch: a damped spring (rad/s, 1/s), normalised so its peak is FX.rushPunchM. */
-const PUNCH_W = 22;
-const PUNCH_DECAY = 6;
+/** Caught arrival punch: a damped spring (FX.rushPunchRadPerSec, FX.rushPunchDecay) normalised to peak at FX.rushPunchM. */
+const PUNCH_W = FX.rushPunchRadPerSec;
+const PUNCH_DECAY = FX.rushPunchDecay;
 const PUNCH_PEAK_T = Math.atan(PUNCH_W / PUNCH_DECAY) / PUNCH_W;
 const PUNCH_NORM = 1 / (Math.sin(PUNCH_W * PUNCH_PEAK_T) * Math.exp(-PUNCH_DECAY * PUNCH_PEAK_T));
-/** The caught head-cant snap starts this long after arrival (s) and takes CANT_SNAP_SEC. */
-const CANT_AT_SEC = 0.12;
-const CANT_SNAP_SEC = 0.06;
+/** The caught jaw overdrive, clamped to what the face model supports. */
+const RUSH_SCREAM_MAX = Math.min(FX.rushScreamMax, SCREAM_MAX);
 
 export class PeekerThreat implements ThreatPresenter {
   readonly id = 'peeker' as const;
@@ -77,8 +72,8 @@ export class PeekerThreat implements ThreatPresenter {
   private faceMat!: MeshBasicMaterial;
   private smear!: Mesh;
   private smearMat!: MeshBasicMaterial;
-  /** Local z of the front of the skin (m, unscaled), for the rush's stopping distance. */
-  private frontZ = 0.09;
+  /** Local z of the front of the neutral skin (m, unscaled), for the rush's stopping distance. */
+  private frontZ = 0;
 
   private readonly taps = new LoopSlot();
   private readonly voice = new VoiceSlot();
@@ -126,7 +121,7 @@ export class PeekerThreat implements ThreatPresenter {
     this.head.scale.setScalar(FX.faceScale);
     this.faceMat = this.face.material;
     this.faceMat.opacity = 0;
-    this.frontZ = this.face.skin.geometry.boundingBox?.max.z ?? this.frontZ;
+    this.frontZ = this.face.front;
     this.root.add(this.head);
 
     // Breath on the glass where the face presses through; drawn after the face so it hazes it from outside.
@@ -214,6 +209,21 @@ export class PeekerThreat implements ThreatPresenter {
     this.voice.release(0.08);
     this.lingerLeft = 0;
     this.rushStart.copy(this.head.position);
+    // Come at the player from the gaze side: a face that starts behind or beside them (or, with a steep
+    // gaze, high above or below it) would sweep through the head on its way in.
+    const fwd = ctx.headForward;
+    this.tmpA.set(fwd.x, 0, fwd.z);
+    if (this.tmpA.lengthSq() > 1e-6) {
+      this.tmpA.normalize();
+      const r = this.root.localToWorld(this.tmpB.copy(this.rushStart)).sub(ctx.headPos);
+      const minCos = FX.rushAheadMinCos;
+      const ahead =
+        r.dot(fwd) >= minCos * r.length() && r.x * this.tmpA.x + r.z * this.tmpA.z >= minCos * Math.hypot(r.x, r.z);
+      if (!ahead) {
+        this.tmpB.copy(ctx.headPos).addScaledVector(this.tmpA, FX.rushRestartAheadM);
+        this.rushStart.copy(this.root.worldToLocal(this.tmpB));
+      }
+    }
     this.mode = 'caught';
     this.modeT = 0;
     this.faceMat.opacity = 1;
@@ -256,35 +266,36 @@ export class PeekerThreat implements ThreatPresenter {
   private tickActive(ctx: FrameContext, dt: number): void {
     this.fadeIn = Math.min(1, this.fadeIn + dt / FX.fadeInSec);
     // The meter is the face's progress through the glass.
-    this.mSm = damp(this.mSm, this.meter, 2.5, dt);
+    this.mSm = damp(this.mSm, this.meter, FX.meterRate, dt);
     const inBeam = ctx.flashlight.on && ctx.flashlight.containsPoint(this.facePos);
-    this.lit = damp(this.lit, inBeam ? 1 : 0, 12, dt);
-    this.flinch = damp(this.flinch, this.countering ? 1 : 0, 9, dt);
-    this.recoil = damp(this.recoil, this.countering ? FX.flinchRecoilM : 0, 5, dt);
+    this.lit = damp(this.lit, inBeam ? 1 : 0, FX.litRate, dt);
+    this.flinch = damp(this.flinch, this.countering ? 1 : 0, FX.flinchRate, dt);
+    this.recoil = damp(this.recoil, this.countering ? FX.flinchRecoilM : 0, FX.recoilRate, dt);
 
     const depth = lerp(-FX.startOutsideM, FX.fullInsideM, easeInOutSine(this.mSm)) - this.recoil;
     this.placeFace(ctx, depth, 0.001 + 0.007 * this.flinch, this.flinch);
 
     // Eyes squeezed shut against the light; the mouth opens as it gets close, and shuts while it flinches.
-    this.squint = damp(this.squint, Math.max(this.lit, this.flinch), SQUINT_RATE, dt);
+    this.squint = damp(this.squint, Math.max(this.lit, this.flinch), FX.squintRate, dt);
     const open = FX.screamAtFullMeter * smoothstep(FX.screamFromMeter, 1, this.mSm) * (1 - this.flinch);
-    this.scream = damp(this.scream, open, SCREAM_RATE, dt);
+    this.scream = damp(this.scream, open, FX.screamRate, dt);
     this.face.setExpression(this.squint, this.scream);
 
     // Behind the glass it is a haze, more ghost than object; inside it is all there.
-    const glass = lerp(FX.glassHaze, 1, smoothstep(-0.2, 0.02, depth));
+    const glass = lerp(FX.glassHaze, 1, smoothstep(FX.hazeFromDepthM, FX.hazeToDepthM, depth));
     this.opacity = this.fadeIn * glass;
     this.faceMat.opacity = this.opacity;
     // It surfaces out of the dark as it comes in (the teaching pass keeps it findable at the window).
     const dark = this.teaching ? FX.darkBrightness : lerp(FX.darkBrightnessFar, FX.darkBrightness, this.mSm);
-    const bright = lerp(dark, FX.litBrightness, this.lit) * (0.9 + 0.2 * this.mSm);
-    this.faceMat.color.setScalar(bright * (this.teaching ? 1.15 : 1));
+    const ramp = FX.meterBrightnessBase + FX.meterBrightnessGain * this.mSm;
+    const bright = lerp(dark, FX.litBrightness, this.lit) * ramp;
+    this.faceMat.color.setScalar(bright * (this.teaching ? FX.teachingBoost : 1));
     // Once the face is through the glass the breath smear is behind it: draw the smear first,
     // so the skin's faded rim (which writes depth) cannot cut a dark outline out of it.
     this.smear.renderOrder = depth > -0.03 ? RENDER_ORDER.body - 1 : RENDER_ORDER.body + 2;
 
     const crossing = 1 - smoothstep(0.02, 0.22, Math.abs(depth));
-    this.smearAmt = damp(this.smearAmt, 0.13 * crossing + (depth > 0.05 ? 0.03 : 0), 4, dt);
+    this.smearAmt = damp(this.smearAmt, FX.smearCrossing * crossing + (depth > 0.05 ? FX.smearInside : 0), 4, dt);
     this.smearMat.opacity = this.smearAmt * this.fadeIn;
 
     // Tapping follows the meter; it all but stops while the light is on it.
@@ -323,7 +334,9 @@ export class PeekerThreat implements ThreatPresenter {
     const creep = FX.rushCreepM * smoothstep(0, hold, after);
     // Stop with the skin's surface rushFaceDistM from the eyes, eye to eye (less the punch and creep).
     const dist = FX.rushFaceDistM - punch - creep + this.frontZ * s;
-    pointInFrontOfHead(ctx.headPos, ctx.headForward, dist, -this.face.eyeCenter.y * s, this.tmpB);
+    // Eye-level offset along the gaze's own up (not world Y), so the stop distance holds at any pitch.
+    this.tmpB.set(0, 1, 0).addScaledVector(ctx.headForward, -ctx.headForward.y).normalize();
+    this.tmpB.multiplyScalar(-this.face.eyeCenter.y * s).addScaledVector(ctx.headForward, dist).add(ctx.headPos);
     this.root.worldToLocal(this.tmpA.copy(this.tmpB));
     this.tmpA.lerpVectors(this.rushStart, this.tmpA, e);
     const shake = 0.002 + 0.004 * e;
@@ -334,16 +347,16 @@ export class PeekerThreat implements ThreatPresenter {
     );
     this.root.localToWorld(this.facePos.copy(this.head.position));
     this.head.lookAt(ctx.headPos);
-    const cant = smoothstep(CANT_AT_SEC, CANT_AT_SEC + CANT_SNAP_SEC, after);
+    const cant = smoothstep(FX.rushCantAtSec, FX.rushCantAtSec + FX.rushCantSnapSec, after);
     this.head.rotateZ(jitter(this.time, 23, 19) * 0.06 + this.turnSign * FX.rushCantRad * cant);
     this.head.scale.setScalar(s);
-    this.squint = damp(this.squint, 0, RUSH_EXPR_RATE, dt);
+    this.squint = damp(this.squint, 0, FX.rushExprRate, dt);
     // The jaw keeps dropping past full through the hold (the scream morph is overdriven).
-    this.scream = damp(this.scream, lerp(1, FX.rushScreamMax, smoothstep(0, hold, after)), RUSH_EXPR_RATE, dt);
+    this.scream = damp(this.scream, lerp(1, RUSH_SCREAM_MAX, smoothstep(0, hold, after)), FX.rushExprRate, dt);
     this.face.setExpression(this.squint, this.scream);
     this.faceMat.opacity = 1;
     // Keep the baked form (no over-exposure); now and then the strobe drops it to dark for a frame or two.
-    const strobe = jitter(this.time, 24, 28) > 0.7;
+    const strobe = jitter(this.time, 24, 28) > FX.rushStrobeAbove;
     this.faceMat.color.setScalar(strobe ? FX.rushStrobeLow : FX.rushBrightness + 0.05 * jitter(this.time, 25, 31));
     this.smearAmt = damp(this.smearAmt, 0, 6, dt);
     this.smearMat.opacity = this.smearAmt;
@@ -387,8 +400,8 @@ export class PeekerThreat implements ThreatPresenter {
     this.head.lookAt(ctx.headPos);
     // A slow, curious head tilt that becomes an inhuman lean as the meter rises, a rare
     // ~60 ms micro-twitch, and a shudder when it flinches.
-    const tilt = lerp(FX.headTiltRad, FX.headLeanRad, smoothstep(0.4, 1, this.mSm));
-    const twitch = smoothstep(0.9, 0.96, jitter(t, 31, 9)) * FX.twitchRad;
+    const tilt = lerp(FX.headTiltRad, FX.headLeanRad, smoothstep(FX.leanFromMeter, 1, this.mSm));
+    const twitch = smoothstep(FX.twitchGateFrom, FX.twitchGateTo, jitter(t, 31, FX.twitchHz)) * FX.twitchRad;
     this.head.rotateZ(wobble(t * 0.3, 2) * tilt + jitter(t, 13, 17) * shake * 8 - this.turnSign * twitch);
     if (twitch > 0) this.head.rotateX(0.4 * twitch);
     if (turn > 0.001) {
